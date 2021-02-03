@@ -27,8 +27,5 @@ instance
   #L-indep = record { #-irrefl = #L-irrefl _;
                       #-sym = λ { AB → BA ; BA → AB }}
 
-example2 : (C ̇ A ̇ B ̇ ε) ≡ (C ̇ B ̇ A ̇ ε)
-example2 = (C ̇ A ̇ B ̇ ε)   ≡⟨ pcm-cong-head assoc ⟩
-           C ̇ ([ A ] ^ [ B ]) ^ ε ≡⟨ abComm _ _ _ _ ⟩
-           C ̇ ([ B ] ^ [ A ]) ^ ε  ≡⟨ pcm-cong-head (sym assoc) ⟩
-           (C ̇ B ̇ A ̇ ε) ∎
+example1 : (C ̇ A ̇ B ̇ ε) ≡ (C ̇ B ̇ A ̇ ε)
+example1 = pcm-cong-head (swap-head {i = AB})
