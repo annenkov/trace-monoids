@@ -36,7 +36,7 @@ a ≠ b = a ≡ b → ⊥
 ≠-sym np q =  np (sym q)
 
 data _#'_ : Action → Action → Set where
-  #'-RR : ∀ l → Read l #' Read l
+  #'-RR : ∀ l₁ l₂ → Read l₁ #' Read l₂
   #'-WW : ∀ l₁ l₂ → l₁ ≠ l₂ → Write l₁ #' Write l₂
   #'-WR : ∀ l₁ l₂ → l₁ ≠ l₂ → Write l₁ #' Read l₂
   #'-RW : ∀ l₁ l₂ → l₁ ≠ l₂ → Read l₁ #' Write l₂
@@ -53,7 +53,7 @@ data _#_ : Event → Event → Set where
 #-irrefl (i , e) (#-neq-tr _ _ p _) = p refl
 
 #'-sym : ∀ {e₁ e₂ : Action} → e₁ #' e₂ → e₂ #' e₁
-#'-sym (#'-RR l) = #'-RR l
+#'-sym (#'-RR l₁ l₂) = #'-RR l₂ l₁
 #'-sym (#'-WW l₁ l₂ x) = #'-WW l₂ l₁ (≠-sym x)
 #'-sym (#'-WR l₁ l₂ x) = #'-RW l₂ l₁ (≠-sym x)
 #'-sym (#'-RW l₁ l₂ x) = #'-WR l₂ l₁ (≠-sym x)
@@ -185,7 +185,7 @@ ex-eval : xy-to-list (eval ∅ init-regs ex1) ≡ (((0 , just 1) ∷ (1 , just 1
 ex-eval = refl
 
 -- Interpretation of the Read-Write language into traces of Read/Write actions
-
+-- The interpretation "forgets" the comutational part and leaves only occurences of reads and writes
 ⟦_⟧ : Schedule → Trace
 ⟦ [] ⟧ = ε
 ⟦ (i , ReadLoc l) ∷ xs ⟧ = (i , Read l) ̇ ⟦ xs ⟧
@@ -203,50 +203,59 @@ serializable p = Σ[ (p₁ , p₂) ∈ Transaction × Transaction ] (⟦ p ⟧ �
 
 -- Semantically equivalent programs result in the same store (we ignore the state of the registers)
 _≈_ : Schedule → Schedule → Set
-p₁ ≈ p₂ = fst (eval ∅ init-regs p₁) ≡  fst (eval ∅ init-regs p₂)
+p₁ ≈ p₂ = ∀ l → fst (eval ∅ init-regs p₁) l ≡  fst (eval ∅ init-regs p₂) l
 
 ex-interleaving : ℕ → Schedule
 ex-interleaving a =
-  (0 , ReadLoc A) ﹔ (0 , WriteLoc A (Load ∔ ` a)) ﹔(0 , ReadLoc  B) ﹔(1 , ReadLoc A) ﹔
-  (0 , WriteLoc B (Load ∔ ` 10)) ﹔ (1 , WriteLoc A (Load ∔ ` a)) ﹔(1 , ReadLoc  B) ﹔(1 , WriteLoc B (Load ∔ ` 10)) ﹔
+  (0 , ReadLoc A) ﹔ (0 , WriteLoc A (Load ∔ ` a)) ﹔(0 , ReadLoc  B) ﹔(1 , ReadLoc A) ﹔ (1 , WriteLoc A (Load ∔ ` a)) ﹔
+  (0 , WriteLoc B (Load ∔ ` 10)) ﹔ (1 , ReadLoc  B) ﹔(1 , WriteLoc B (Load ∔ ` 10)) ﹔
   end
 
+infix 40 _%T₀
 infix 40 _%T₁
-infix 40 _%T₂
+
+_%T₀ : Action → ℕ × Action
+e %T₀ = (0 , e)
 
 _%T₁ : Action → ℕ × Action
-e %T₁ = (0 , e)
-
-_%T₂ : Action → ℕ × Action
-e %T₂ = (1 , e)
+e %T₁ = (1 , e)
 
 
 -- The program `ex-interleaving` corresponds to the following schedule
 ex-schedule : ∀ a →
   ⟦ ex-interleaving a ⟧ ≡
-  Read A %T₁ ̇ Write A %T₁ ̇ Read B %T₁ ̇ Read A %T₂ ̇ Write B %T₁ ̇ Write A %T₂ ̇ Read B %T₂ ̇ Write B %T₂ ̇ ε
+  Read A %T₀ ̇ Write A %T₀ ̇ Read B %T₀ ̇ Read A %T₁ ̇ Write A %T₁ ̇ Write B %T₀ ̇ Read B %T₁ ̇ Write B %T₁ ̇ ε
 ex-schedule _ = refl
 
--- It can be rewritten in the standard "textbook" 2-dimentional notation as follows.
+-- It can be rewritten in the standard "textbook" 2-dimentional notation as follows
+-- (we asssume that each transaction commits immedately after the last operation).
 
---------------------------------------|
---| T₁ : RA  WA  RB    WB             |
---| T₂ :            RA    WA  RB  WB  |
---------------------------------------|
+-------------------------------------|
+--| T₀ : RA  WA  RB       WB         |
+--| T₁ :            RA WA    RB  WB  |
+-------------------------------------|
 
--- Clealry, it's ok to read A in the second transaction, while writing B in the first one,
+-- Clealry, it's ok to read A and write A in T₁, while reading B in T₀, and write A in T₁ while writing B in T₀
 -- since the locations are disjoint and there is no conflict.
 
 
 ex-trace-equiv : {a : ℕ} → ex-interleaving a ∼ seq-scheduler (rw-prog₁ a) (rw-prog₁ a)
-ex-trace-equiv = pcm-cong-head (pcm-cong-head (pcm-cong-head
-  (swap-head {i = #-neq-tr _ _ snotz (#'-RW A B znots)})))
+ex-trace-equiv = pcm-cong-head {s₁ = Read A %T₀ ̇ Write A %T₀ ̇ Read B %T₀ ̇ ε}
+                 (Read A %T₁ ̇ Write A %T₁ ̇ Write B %T₀ ̇ Read B %T₁ ̇ Write B %T₁ ̇ ε
+                  ≡⟨ cong (Read A %T₁ ̇_) (pcm-comm _ _ _ {#-neq-tr _ _ snotz (#'-WW _ _ znots)}) ⟩
+                  Read A %T₁ ̇ Write B %T₀ ̇ Write A %T₁ ̇ Read B %T₁ ̇ Write B %T₁ ̇ ε
+                  ≡⟨ (pcm-comm _ _ _ {#-neq-tr _ _ snotz (#'-RW _ _ znots)}) ⟩
+                  Write B %T₀ ̇ Read A %T₁ ̇ Write A %T₁ ̇ Read B %T₁ ̇ Write B %T₁ ̇ ε ∎)
 
+-- The interleaved schedule is serializable, therefore safe.
 ex-serializable : ∀ {a : ℕ} → serializable (ex-interleaving a)
 ex-serializable {a = a} =  ( (rw-prog₁ a , rw-prog₁ a) , ex-trace-equiv {a = a})
 
+-- Moreover it gives the same result under the evaluation semantics.
 ex-eval-equiv : {a : ℕ} → ex-interleaving a ≈ seq-scheduler (rw-prog₁ a) (rw-prog₁ a)
-ex-eval-equiv = refl
+ex-eval-equiv zero = refl
+ex-eval-equiv (suc zero) = refl
+ex-eval-equiv (suc _) = refl
 
 _==ₑ_ : Exp → Exp → Bool
 (e₁ ∔ e₂) ==ₑ (e₃ ∔ e₄) =  (e₁ ==ₑ e₃) and (e₂ ==ₑ e₄)
