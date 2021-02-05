@@ -230,13 +230,19 @@ ex-schedule _ = refl
 -- It can be rewritten in the standard "textbook" 2-dimentional notation as follows
 -- (we asssume that each transaction commits immedately after the last operation).
 
--------------------------------------|
---| T₀ : RA  WA  RB       WB         |
---| T₁ :            RA WA    RB  WB  |
--------------------------------------|
+-----------------------------------------|
+--| T₀ : RA  WA  RB          WB          |
+--| T₁ :             RA  WA      RB  WB  |
+-----------------------------------------|
 
 -- Clealry, it's ok to read A and write A in T₁, while reading B in T₀, and write A in T₁ while writing B in T₀
 -- since the locations are disjoint and there is no conflict.
+
+-- The sequential scheduling would look like this:
+-----------------------------------------|
+--| T₀ : RA  WA  RB  WB                  |
+--| T₁ :                 RA  WA  RB  WB  |
+-----------------------------------------|
 
 
 ex-trace-equiv : {a : ℕ} → ex-interleaving a ∼ seq-scheduler (rw-prog₁ a) (rw-prog₁ a)
