@@ -185,7 +185,7 @@ ex-eval : xy-to-list (eval ∅ init-regs ex1) ≡ (((0 , just 1) ∷ (1 , just 1
 ex-eval = refl
 
 -- Interpretation of the Read-Write language into traces of Read/Write actions
--- The interpretation "forgets" the comutational part and leaves only occurences of reads and writes
+-- The interpretation "forgets" the computational part and leaves only occurences of reads and writes
 ⟦_⟧ : Schedule → Trace
 ⟦ [] ⟧ = ε
 ⟦ (i , ReadLoc l) ∷ xs ⟧ = (i , Read l) ̇ ⟦ xs ⟧
@@ -302,6 +302,32 @@ ex-same1 = refl
 -- A possible way of stating correctness of the interpretations into traces
 
 -- trace-sem-adequate : {p₁ p₂ : Schedule} → same-commands p₁ p₂ ≡ true → p₁ ∼ p₂ → p₁ ≈ p₂
+-- trace-sem-adequate {[]} {x₂ ∷ p₂} s teq = ⊥.rec (true≢false (sym s))
+-- trace-sem-adequate {[]} {[]} s teq = refl
+-- trace-sem-adequate {x₁ ∷ p₁} {x₂ ∷ p₂} s teq = {!!}
+-- trace-sem-adequate {x₁ ∷ p₁} {[]} s teq = ⊥.rec (true≢false (sym s))
+
+-- Another way
+
+postulate
+
+  ¬psm-cons≡ε : ∀ {A : Set} {x : A} {φ : A → A → Set} {{_ : IsIndependency φ}} {m} → ¬ ((x ̇ m ≡ ε))
+
+⟦⟧-empty-inv : {p : Schedule} → ⟦ p ⟧ ≡ ε → p ≡ []
+⟦⟧-empty-inv {[]} h = refl
+⟦⟧-empty-inv {(i , ReadLoc x) ∷ p} h = ⊥.elim (¬psm-cons≡ε h)
+⟦⟧-empty-inv {(i , WriteLoc x x₁) ∷ p} h = ⊥.elim (¬psm-cons≡ε h)
+
+trace-sem-adequate : {t : Trace } {p₁ p₂ : Schedule} → ⟦ p₁ ⟧ ≡ t → ⟦ p₂ ⟧ ≡ t → p₁ ≈ p₂
+trace-sem-adequate {ε} {p₁} {p₂} p₁_t p₂_t =
+                   λ l → ((fst (eval ∅ init-regs p₁) l)
+                           ≡⟨ cong (λ a → fst (eval ∅ init-regs a) l) (⟦⟧-empty-inv p₁_t) ⟩
+                           (fst (eval ∅ init-regs []) l)
+                           ≡⟨ cong (λ a → fst (eval ∅ init-regs a) l) (sym (⟦⟧-empty-inv p₂_t)) ⟩
+                           (fst (eval ∅ init-regs p₂) l) ∎)
+trace-sem-adequate {x ̇ t} {p1} {p2} p1_t p2_t = {!!}
+trace-sem-adequate {pcm-comm a b t i} {p1} {p2} p1_t p2_t = {!!}
+trace-sem-adequate {squashPcm t t₁ p q i i₁} {p1} {p2} p1_t p2_t = {!!}
 -- trace-sem-adequate {[]} {x₂ ∷ p₂} s teq = ⊥.rec (true≢false (sym s))
 -- trace-sem-adequate {[]} {[]} s teq = refl
 -- trace-sem-adequate {x₁ ∷ p₁} {x₂ ∷ p₂} s teq = {!!}
