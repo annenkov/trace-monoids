@@ -90,12 +90,14 @@ Registers = ℕ → ℕ
 Store = Map
 RegisterVal = ℕ
 
+isJust : ∀ {A : Set} → Maybe A → Bool
+isJust (just _) = true
+isJust _ = false
+
 infixl 100 _⊛_
 
 _⊛_ : Map → Map → Map
-(m₁ ⊛ m₂) l with m₁ l
-... | just v = just v
-... | nothing = m₂ l
+(m₁ ⊛ m₂) l = if isJust (m₁ l) then m₁ l else m₂ l
 
 ⊛-assoc' : ∀ (m₁ m₂ m₃ : Map) (l : Location) → (m₁ ⊛ (m₂ ⊛ m₃)) l ≡ ((m₁ ⊛ m₂) ⊛ m₃) l
 ⊛-assoc' m₁ m₂ m₃ l with m₁ l
@@ -143,10 +145,10 @@ evalE v Load = v
 evalE v (` i) = i
 
 -- Take a global store, registers and return a potentially updated global state
-eval : Store → Registers → Schedule → Store
-eval σ ρ [] = σ
-eval σ ρ ( (i , ReadLoc l) ∷ xs) = eval σ (set-reg ρ i (get-default σ l)) xs
-eval σ ρ ( (i , WriteLoc l e) ∷ xs) = eval ([ l ~> evalE (ρ i) e ] ⊛ σ) ρ xs
+eval : Schedule → Registers → Store  → Store
+eval [] ρ σ   = σ
+eval ((i , ReadLoc l) ∷ xs) ρ σ  = eval xs (set-reg ρ i (get-default σ l)) σ
+eval ((i , WriteLoc l e) ∷ xs) ρ σ  = eval xs ρ ([ l ~> evalE (ρ i) e ] ⊛ σ)
 
 mk-sch : ℕ → Transaction → Schedule
 mk-sch i xs = map (λ c → (i , c)) xs
@@ -158,7 +160,7 @@ seq-scheduler : Transaction → Transaction → Schedule
 seq-scheduler xs ys = mk-sch 0 xs ++ mk-sch 1 ys
 
 eval-seq : Store → Registers → Transaction × Transaction → Store
-eval-seq σ ρ (t₁ , t₂) = eval σ ρ (seq-scheduler t₁ t₂)
+eval-seq σ ρ (t₁ , t₂) = eval (seq-scheduler t₁ t₂) ρ σ
 
 infixr 5 _﹔_
 
@@ -180,7 +182,7 @@ ex1 = mk-sch 0 (rw-prog₁ 1)
 xy-to-list : Store → List (ℕ × Maybe ℕ)
 xy-to-list σ = (0 , σ 0) ∷ (1 , σ 1) ∷ []
 
-ex-eval : xy-to-list (eval ∅ init-regs ex1) ≡ ((0 , just 1) ∷ (1 , just 10) ∷ [])
+ex-eval : xy-to-list (eval ex1 init-regs ∅) ≡ ((0 , just 1) ∷ (1 , just 10) ∷ [])
 ex-eval = refl
 
 rw-prog₂ : List Action
@@ -189,7 +191,7 @@ rw-prog₂ = ReadLoc A ﹔ WriteLoc A (Load ∔ ` 1) ﹔(ReadLoc  A) ﹔( WriteL
 ex2 : Schedule
 ex2 = mk-sch 0 rw-prog₂
 
-ex₂-eval : xy-to-list (eval ∅ init-regs ex2) ≡ ((0 , just 1) ∷ (1 , just 11) ∷ [])
+ex₂-eval : xy-to-list (eval ex2 init-regs ∅) ≡ ((0 , just 1) ∷ (1 , just 11) ∷ [])
 ex₂-eval = refl
 
 
@@ -213,7 +215,7 @@ serializable p = Σ[ (p₁ , p₂) ∈ Transaction × Transaction ] (⟦ p ⟧ �
 
 -- Semantically equivalent programs result in the same store (we ignore the state of the registers)
 _≈_ : Schedule → Schedule → Set
-p₁ ≈ p₂ = ∀ l → (eval ∅ init-regs p₁) l ≡ (eval ∅ init-regs p₂) l
+p₁ ≈ p₂ = eval p₁ ≡ eval p₂
 
 ex-interleaving : ℕ → Schedule
 ex-interleaving a =
@@ -268,22 +270,8 @@ ex-serializable : ∀ {a : ℕ} → serializable (ex-interleaving a)
 ex-serializable {a = a} =  ( (rw-prog₁ a , rw-prog₁ a) , ex-trace-equiv {a = a})
 
 -- Moreover it gives the same result under the evaluation semantics.
-ex-eval-equiv : ex-interleaving 0 ≈ seq-scheduler (rw-prog₁ 0) (rw-prog₁ 0)
-ex-eval-equiv zero = refl
-ex-eval-equiv (suc zero) = refl
-ex-eval-equiv (suc _) = {!!}
-
--- eval-t-e : Store → Registers → Event → Store × Registers
--- eval-t-e σ ρ (i , ReadLoc l) = {!set-reg ρ i (get-default σ l)!}
--- eval-t-e σ ρ (i , WriteLoc l e) = {!!}
-
--- module _ {a b} {A : Set a} {B : A → Set b} where
-
---   data Graph (f : ∀ x → B x) (x : A) (y : B x) : Set b where
---     ingraph : f x ≡ y → Graph f x y
-
---   inspect : (f : ∀ x → B x) (x : A) → Graph f x (f x)
---   inspect _ _ = ingraph refl
+-- ex-eval-equiv : ex-interleaving 0 ≈ seq-scheduler (rw-prog₁ 0) (rw-prog₁ 0)
+-- ex-eval-equiv _ = {!!}
 
 record Reveal_·_is_ {a b} {A : Set a} {B : A → Set b}
                     (f : (x : A) → B x) (x : A) (y : B x) :
@@ -321,67 +309,73 @@ set-reg-irrel {ρ} {i₁} {i₂} {v} neq with (i₁ == i₂)| inspect (λ x → 
 ... | true  | [ eq ] = ⊥.elim (neq (ℕ==→≡ eq))
 ... | false  | [ eq ] = refl
 
-eval-t : Trace → Registers → Store → Store
-eval-t tr =
-  Rec.f {!!} (λ _ σ → σ)
-             (λ { (i , ReadLoc l) rec ρ σ → rec ((set-reg ρ i (get-default σ l))) σ
-                ; (i , WriteLoc l e) rec ρ σ → rec ρ ([ l ~> evalE (ρ i) e ] ⊛ σ) })
-             (λ x y rec → λ { (#-neq-tr (i₁ , .(ReadLoc l₁)) (i₂ , .(ReadLoc l₂)) neq (#'-RR l₁ l₂))
-                                        → funExt (λ ρ → funExt λ σ → cong₂ rec (set-reg-≠-regs-ext neq) refl )
-                             ; (#-neq-tr (i₁ , .(WriteLoc l₁ e₁)) (i₂ , .(WriteLoc l₂ e₂)) neq (#'-WW l₁ l₂ e₁ e₂ x))
-                                         → funExt (λ ρ → funExt λ σ → {!!})
-                             ; (#-neq-tr (i₁ , .(WriteLoc l₁ e)) (i₂ , .(ReadLoc l₂)) neq (#'-WR l₁ l₂ e x))
-                                             → funExt (λ ρ → funExt λ σ →
-                                             cong₂ rec (funExt λ v →
-                                             cong₂ (set-reg ρ i₂) (get-default-≠ x) refl)
-                                             (cong (λ x → [ l₁ ~> evalE x e ] ⊛ σ) (sym (set-reg-irrel {ρ = ρ} (≠-sym neq)))))
-                             ; (#-neq-tr (i₁ , .(ReadLoc l₁)) (i₂ , .(WriteLoc l₂ e)) neq (#'-RW l₁ l₂ e x))
-                                         → funExt (λ ρ → funExt λ σ → {!!})} )
-                             tr
--- ∀ (e₁ e₂ : Event)
---            → fst e₁ ≠ fst e₂
---            → snd e₁ #' snd e₂
--- σ , ρ
--- eval-t σ ρ ( (i , ReadLoc l) ∷ xs) = eval σ (set-reg ρ i (get-default σ l)) xs
--- eval-t σ ρ ( (i , WriteLoc l e) ∷ xs) = eval (σ [ l ~> evalE (ρ i) e ]) ρ xs
+update-commutes : ∀ {l₁ v₁ l₂ v₂} l → l₁ ≠ l₂ → ([ l₁ ~> v₁ ] ⊛ ([ l₂ ~> v₂ ])) l ≡ ([ l₂ ~> v₂ ] ⊛ ([ l₁ ~> v₁ ])) l
+update-commutes {l₁} {v₁} {l₂} {v₂} l neq with (l₁ == l) | inspect (λ x → l₁ == x) l | (l₂ == l) | inspect (l₂ ==_) l
+... | true  | [ eq1 ] | true  | [ eq2 ] = ⊥.elim (neq ((ℕ==→≡ eq1) ∙ sym (ℕ==→≡ eq2)))
+... | true  | [ eq1 ] | false | [ eq2 ]  = refl
+... | false  | [ eq1 ] | true | [ eq2 ]  = refl
+... | false  | [ eq1 ] | false | [ eq2 ]  = refl
 
-_==ₑ_ : Exp → Exp → Bool
-(e₁ ∔ e₂) ==ₑ (e₃ ∔ e₄) =  (e₁ ==ₑ e₃) and (e₂ ==ₑ e₄)
-Load ==ₑ Load = true
-(` i₁) ==ₑ (` i₂)  =  i₁ == i₂
-_ ==ₑ _ = false
-
-_===_ : Action → Action → Bool
-(ReadLoc x₁) === (ReadLoc x₂) =  x₁ == x₂
-(ReadLoc x₁) === (WriteLoc x₂ x₃) = false
-(WriteLoc x₁ x₂) === (ReadLoc x₃) =  false
-(WriteLoc l₁ e₁) === (WriteLoc l₂ e₂) = (l₁ == l₂) and (e₁ ==ₑ e₂)
+update-commutes-ext : ∀ {l₁ v₁ l₂ v₂} → l₁ ≠ l₂ → ([ l₁ ~> v₁ ] ⊛ ([ l₂ ~> v₂ ])) ≡ ([ l₂ ~> v₂ ] ⊛ ([ l₁ ~> v₁ ]))
+update-commutes-ext neq = funExt (λ l → update-commutes l neq)
 
 
-{-
--- Another way
+⊛-cong : ∀ {σ₁ σ₂ σ₃ σ₄} → σ₁ ≡ σ₂ → σ₃ ≡ σ₄ → σ₁ ⊛ σ₃ ≡ σ₂ ⊛ σ₄
+⊛-cong p q = cong₂ _⊛_ p q
+
+⊛-cong-assoc : ∀ {σ₁ σ₂ σ₃ σ₄ σ} → σ₁ ≡ σ₂ → σ₃ ≡ σ₄ → σ₁ ⊛ (σ₃ ⊛ σ) ≡ σ₂ ⊛ (σ₄ ⊛ σ)
+⊛-cong-assoc p q = ⊛-cong p (⊛-cong q refl )
 
 postulate
 
-  ¬psm-cons≡ε : ∀ {A : Set} {x : A} {φ : A → A → Set} {{_ : IsIndependency φ}} {m} → ¬ ((x ̇ m ≡ ε))
+  is-set-eval-t : isSet
+      (Registers →  Store → Map)
 
-⟦⟧-empty-inv : {p : Schedule} → ⟦ p ⟧ ≡ ε → p ≡ []
-⟦⟧-empty-inv {[]} h = refl
-⟦⟧-empty-inv {(i , ReadLoc x) ∷ p} h = ⊥.elim (¬psm-cons≡ε h)
-⟦⟧-empty-inv {(i , WriteLoc x x₁) ∷ p} h = ⊥.elim (¬psm-cons≡ε h)
+eval-t-rec : Event → (Registers → Store → Map) → Registers → Store → Map
+eval-t-rec (i , ReadLoc l) rec ρ σ = rec (set-reg ρ i (get-default σ l)) σ
+eval-t-rec (i , WriteLoc l e) rec ρ σ = rec ρ ([ l ~> evalE (ρ i) e ] ⊛ σ)
 
-trace-sem-adequate : {t : Trace } {p₁ p₂ : Schedule} → ⟦ p₁ ⟧ ≡ t → ⟦ p₂ ⟧ ≡ t → p₁ ≈ p₂
-trace-sem-adequate {ε} {p₁} {p₂} p₁_t p₂_t =
-                   λ l → ((fst (eval ∅ init-regs p₁) l)
-                           ≡⟨ cong (λ a → fst (eval ∅ init-regs a) l) (⟦⟧-empty-inv p₁_t) ⟩
-                           (fst (eval ∅ init-regs []) l)
-                           ≡⟨ cong (λ a → fst (eval ∅ init-regs a) l) (sym (⟦⟧-empty-inv p₂_t)) ⟩
-                           (fst (eval ∅ init-regs p₂) l) ∎)
-trace-sem-adequate {x ̇ t} {p1} {p2} p1_t p2_t = {!!}
-trace-sem-adequate {pcm-comm a b t i} {p1} {p2} p1_t p2_t = {!!}
-trace-sem-adequate {squashPcm t t₁ p q i i₁} {p1} {p2} p1_t p2_t = {!!}
--- trace-sem-adequate {[]} {x₂ ∷ p₂} s teq = ⊥.rec (true≢false (sym s))
--- trace-sem-adequate {[]} {[]} s teq = refl
--- trace-sem-adequate {x₁ ∷ p₁} {x₂ ∷ p₂} s teq = {!!}
--- trace-sem-adequate {x₁ ∷ p₁} {[]} s teq = ⊥.rec (true≢false (sym s))
--}
+eval-t-commute : ∀ (x y : Event) (tr : Trace) →
+                 (rec :  Registers → Store → Map) →
+                 x # y →
+                 eval-t-rec x (eval-t-rec y rec) ≡ eval-t-rec y (eval-t-rec x rec)
+eval-t-commute (i₁ , _) (i₂ , _) tr rec (#-neq-tr _ _ neq (#'-RR l₁ l₂)) =
+                        funExt (λ _ → funExt λ _ → cong₂ rec (set-reg-≠-regs-ext neq) refl)
+eval-t-commute (i₁ , _) (i₂ , _) tr rec (#-neq-tr _ _ neq (#'-WW l₁ l₂ e₁ e₂ x)) =
+                        funExt (λ ρ → funExt λ σ → cong (rec ρ)
+                               ( [ l₂ ~> evalE (ρ i₂) e₂ ] ⊛ ([ l₁ ~> evalE (ρ i₁) e₁ ] ⊛ σ) ≡⟨ ⊛-assoc [ l₂ ~> evalE (ρ i₂) e₂ ] _ _ ⟩
+                                ([ l₂ ~> evalE (ρ i₂) e₂ ] ⊛ [ l₁ ~> evalE (ρ i₁) e₁ ]) ⊛ σ  ≡⟨ ⊛-cong (update-commutes-ext (≠-sym x)) refl ⟩
+                                ([ l₁ ~> evalE (ρ i₁) e₁ ] ⊛ [ l₂ ~> evalE (ρ i₂) e₂ ]) ⊛ σ  ≡⟨ sym (⊛-assoc ([ l₁ ~> evalE (ρ i₁) e₁ ]) _ _) ⟩
+                                 [ l₁ ~> evalE (ρ i₁) e₁ ] ⊛ ([ l₂ ~> evalE (ρ i₂) e₂ ] ⊛ σ) ∎))
+eval-t-commute (i₁ , _) (i₂ , _) tr rec (#-neq-tr _ _ neq (#'-WR l₁ l₂ e x)) =
+                        funExt (λ ρ →
+                          funExt λ σ →
+                            cong₂ rec (funExt λ v →
+                              cong₂ (set-reg ρ i₂)
+                                    ((get-default-≠ {σ = σ} x)) refl)
+                                    (cong (λ x → [ l₁ ~> evalE x e ] ⊛ σ) (sym (set-reg-irrel {ρ = ρ} (≠-sym neq)))))
+eval-t-commute (i₁ , _) (i₂ , _) tr rec (#-neq-tr _ _ neq (#'-RW l₁ l₂ e x)) =
+                        funExt (λ ρ →
+                          funExt λ σ →
+                            cong₂ rec (cong (set-reg ρ i₁) (sym (get-default-≠ {σ = σ} (≠-sym x))) )
+                                      (⊛-cong (cong (λ x → [ l₂ ~> evalE x e ]) (set-reg-irrel {ρ = ρ} neq)) refl ))
+
+eval-t : Trace → Registers → Store → Store
+eval-t tr =
+  Rec.f is-set-eval-t (λ _ σ → σ)  eval-t-rec (λ x y rec → eval-t-commute x y tr rec ) tr --
+
+eval-eval-t : ∀ (s : Schedule) (ρ : Registers) (σ : Store) (l : Location) → eval s ρ σ l ≡ eval-t ⟦ s ⟧ ρ σ l
+eval-eval-t [] ρ σ l = refl
+eval-eval-t ((i , ReadLoc l1) ∷ xs) ρ σ  l = eval-eval-t xs _ _ _
+eval-eval-t ((i , WriteLoc l1 e) ∷ xs) ρ σ l =  eval-eval-t xs _ _ _
+
+eval-eval-t-ext : ∀ (s : Schedule) → eval s ≡ eval-t ⟦ s ⟧
+eval-eval-t-ext s = funExt (λ σ → funExt (λ ρ → funExt (λ l → eval-eval-t s σ ρ l)))
+
+
+trace-sem-sound : {tr : Trace } {p₁ p₂ : Schedule} → ⟦ p₁ ⟧ ≡ ⟦ p₂ ⟧ → p₁ ≈ p₂
+trace-sem-sound {tr} {p₁} {p₂} tr≡ =
+  eval p₁      ≡⟨ eval-eval-t-ext p₁ ⟩
+  eval-t ⟦ p₁ ⟧ ≡⟨ cong eval-t tr≡ ⟩
+  eval-t ⟦ p₂ ⟧ ≡⟨ sym (eval-eval-t-ext p₂) ⟩
+  eval p₂ ∎
