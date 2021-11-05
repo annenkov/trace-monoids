@@ -1,4 +1,4 @@
-{-# OPTIONS --cubical #-}
+{-# OPTIONS --cubical --rewriting #-}
 
 module TraceMonoidJoinList where
 
@@ -35,6 +35,11 @@ data Pcm (A : Set) (_#_ : A → A → Set) {{φ : IsIndependency _#_}} : Set whe
   abComm : ∀ (s₁ s₂ : Pcm A _#_) (a b : A) {i : a # b} → (s₁ ^ ([ a ] ^ [ b ]) ^ s₂) ≡ (s₁ ^ ([ b ] ^ [ a ]) ^ s₂)
   squashPcm : ∀ x y → (p q : x ≡ y) → p ≡ q
 
+{-# BUILTIN REWRITE _≡_ #-}
+{-# REWRITE idR #-}
+{-# REWRITE idL #-}
+{-# REWRITE assoc #-}
+{-# REWRITE abComm #-}
 
 infixr 20 _̇_
 
@@ -49,17 +54,13 @@ swap-head : ∀ {A : Set} {_#_ : A → A → Set} {{φ : IsIndependency _#_}} �
        a ̇ b ̇ s₁ ≡ b ̇ a ̇ s₁
 swap-head {s₁ = s₁} {a = a} {b = b} {i = i} =
   a ̇ b ̇ s₁
-  ≡⟨ assoc ⟩
-  ([ a ] ^ [ b ]) ^ s₁
-  ≡⟨  sym idL ⟩
+  ≡⟨ refl ⟩
   ε ^ ([ a ] ^ [ b ]) ^ s₁
-  ≡⟨ abComm _ _ _ _ {i = i} ⟩
+  ≡⟨ abComm ε s₁ a b {i = i} ⟩
   ε ^ ([ b ] ^ [ a ]) ^ s₁
-  ≡⟨ idL ⟩
-  ([ b ] ^ [ a ]) ^ s₁
-  ≡⟨ sym assoc ⟩
+  ≡⟨ refl ⟩
   b ̇ a ̇ s₁ ∎
 
 
 monPcm : ∀ {A : Set } {_#_ : A → A → Set} {{φ : IsIndependency _#_}} → IsMonoid ε _^_
-monPcm = makeIsMonoid squashPcm (λ x y z → assoc) (λ x → idR)  (λ x → idL )
+monPcm = makeIsMonoid squashPcm (λ x y z → assoc {_} {_} {x} {y} {z}) (λ x → idR)  (λ x → idL )
