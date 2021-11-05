@@ -26,9 +26,9 @@ open import Agda.Builtin.Nat
 ----------------------------
 
 data Exp : Set where
-  _∔_ : Exp → Exp → Exp
-  Load : Exp -- load a thread-local variable
-  `_ : ℕ → Exp  -- nat literal
+  _∔_ : Exp → Exp → Exp -- addition
+  Load : Exp              -- load a thread-local variable
+  `_ : ℕ → Exp          -- nat literal
 
 infix 22 `_
 
@@ -131,8 +131,9 @@ init-regs = λ _ → 0
 set-reg : Registers → ℕ → ℕ → Registers
 set-reg ρ r₁ v = λ r₂ → if r₁ == r₂ then v else ρ r₂
 
-
--- Semantics of the Read-Write language
+-----------------------------------------------
+-- Store semantics of the Read-Write language -
+-----------------------------------------------
 
 get-default : Map → Location → ℕ
 get-default σ l with σ l
@@ -199,7 +200,7 @@ of-list : {A : Set} -> {R : A → A → Set } -> {{_ : IsIndependency R}} -> Lis
 of-list [] = ε
 of-list (x ∷ xs) = x ̇ of-list xs
 
--- Interpretation of the Read-Write language into traces of Read/Write actions
+-- Interpretation of the Read-Write language as a trace
 ⟦_⟧ : Schedule → Trace
 ⟦ s ⟧ = of-list s
 
@@ -233,13 +234,7 @@ _%T₁ : Action → ℕ × Action
 e %T₁ = (1 , e)
 
 
--- -- The program `ex-interleaving` corresponds to the following schedule
--- ex-schedule : ∀ a →
---   ⟦ ex-interleaving a ⟧ ≡
---   ReadLoc A %T₀ ̇ WriteLoc A %T₀ ̇ Read B %T₀ ̇ Read A %T₁ ̇ Write A %T₁ ̇ Write B %T₀ ̇ Read B %T₁ ̇ Write B %T₁ ̇ ε
--- ex-schedule _ = refl
-
--- It can be rewritten in the standard "textbook" 2-dimentional notation as follows
+-- The schedule can be rewritten in the standard "textbook" 2-dimentional notation as follows
 -- (we asssume that each transaction commits immedately after the last operation).
 
 -----------------------------------------|
@@ -265,14 +260,11 @@ ex-trace-equiv = pcm-cong-head {s₁ = ReadLoc A %T₀ ̇ WriteLoc A _ %T₀ ̇ 
                   ≡⟨ (pcm-comm _ _ _ {#-neq-tr _ _ snotz (#'-RW _ _ _ znots)}) ⟩
                   WriteLoc B _ %T₀ ̇ ReadLoc A %T₁ ̇ WriteLoc A _ %T₁ ̇ ReadLoc B %T₁ ̇ WriteLoc B _ %T₁ ̇ ε ∎)
 
--- The interleaved schedule is serializable, therefore safe.
+-- The interleaved schedule is serializable, therefore safe
 ex-serializable : ∀ {a : ℕ} → serializable (ex-interleaving a)
 ex-serializable {a = a} =  ( (rw-prog₁ a , rw-prog₁ a) , ex-trace-equiv {a = a})
 
--- Moreover it gives the same result under the evaluation semantics.
--- ex-eval-equiv : ex-interleaving 0 ≈ seq-scheduler (rw-prog₁ 0) (rw-prog₁ 0)
--- ex-eval-equiv _ = {!!}
-
+-- Some machinery for maintaning information during pattern-matching, it's standard, but yet missing in the distribution of Cubical Agda (maybe it's updated now?)
 record Reveal_·_is_ {a b} {A : Set a} {B : A → Set b}
                     (f : (x : A) → B x) (x : A) (y : B x) :
                     Set (a ⊔ b) where
@@ -288,6 +280,12 @@ inspect f x = [ refl ]
 ℕ==→≡ {zero} {suc m} p = ⊥.elim {A = λ _ → zero ≡ (suc m)} (true≢false (sym p))
 ℕ==→≡ {suc n} {zero} p = ⊥.elim {A = λ _ → (suc n) ≡ zero } (true≢false (sym p))
 ℕ==→≡ {suc n} {suc m} p = cong suc (ℕ==→≡ p)
+
+--------------
+-- Soundness -
+--------------
+
+-- First, we show that the independent operations commute
 
 set-reg-≠-regs : ∀ {j i₁ i₂ v₁ v₂ ρ} → i₁ ≠ i₂ → set-reg (set-reg ρ i₁ v₁) i₂ v₂ j ≡ set-reg (set-reg ρ i₂ v₂) i₁ v₁ j
 set-reg-≠-regs {j} {i₁} {i₂} {v₁} {v₂} {ρ} neq with (i₁ == j) | inspect (λ x → i₁ == x) j  | i₂ == j | inspect (λ x → i₂ == x) j
@@ -327,9 +325,9 @@ update-commutes-ext neq = funExt (λ l → update-commutes l neq)
 ⊛-cong-assoc p q = ⊛-cong p (⊛-cong q refl )
 
 postulate
-
+  -- TODO: use stdlib to show this (e.g. HLevels.isSetΠ and properties of Maybe)
   is-set-eval-t : isSet
-      (Registers →  Store → Map)
+      (Registers → Store → Map)
 
 eval-t-rec : Event → (Registers → Store → Map) → Registers → Store → Map
 eval-t-rec (i , ReadLoc l) rec ρ σ = rec (set-reg ρ i (get-default σ l)) σ
@@ -360,10 +358,14 @@ eval-t-commute (i₁ , _) (i₂ , _) tr rec (#-neq-tr _ _ neq (#'-RW l₁ l₂ e
                             cong₂ rec (cong (set-reg ρ i₁) (sym (get-default-≠ {σ = σ} (≠-sym x))) )
                                       (⊛-cong (cong (λ x → [ l₂ ~> evalE x e ]) (set-reg-irrel {ρ = ρ} neq)) refl ))
 
+-- We define new sematics by evaluating a trace directly.
+-- We use the recursion principle for the trace monoid, which forces us to prove that
+-- the permutation of independent actions does not change the store
 eval-t : Trace → Registers → Store → Store
 eval-t tr =
   Rec.f is-set-eval-t (λ _ σ → σ)  eval-t-rec (λ x y rec → eval-t-commute x y tr rec ) tr --
 
+-- The store semantics on lists of commands gives the same result as the semantics on traces
 eval-eval-t : ∀ (s : Schedule) (ρ : Registers) (σ : Store) (l : Location) → eval s ρ σ l ≡ eval-t ⟦ s ⟧ ρ σ l
 eval-eval-t [] ρ σ l = refl
 eval-eval-t ((i , ReadLoc l1) ∷ xs) ρ σ  l = eval-eval-t xs _ _ _
@@ -372,10 +374,18 @@ eval-eval-t ((i , WriteLoc l1 e) ∷ xs) ρ σ l =  eval-eval-t xs _ _ _
 eval-eval-t-ext : ∀ (s : Schedule) → eval s ≡ eval-t ⟦ s ⟧
 eval-eval-t-ext s = funExt (λ σ → funExt (λ ρ → funExt (λ l → eval-eval-t s σ ρ l)))
 
-
-trace-sem-sound : {tr : Trace } {p₁ p₂ : Schedule} → ⟦ p₁ ⟧ ≡ ⟦ p₂ ⟧ → p₁ ≈ p₂
-trace-sem-sound {tr} {p₁} {p₂} tr≡ =
+-- Soundness: equal traces give semantically equivalent schedules
+trace-sem-sound : {p₁ p₂ : Schedule} → ⟦ p₁ ⟧ ≡ ⟦ p₂ ⟧ → p₁ ≈ p₂
+trace-sem-sound {p₁} {p₂} tr≡ =
   eval p₁      ≡⟨ eval-eval-t-ext p₁ ⟩
   eval-t ⟦ p₁ ⟧ ≡⟨ cong eval-t tr≡ ⟩
   eval-t ⟦ p₂ ⟧ ≡⟨ sym (eval-eval-t-ext p₂) ⟩
   eval p₂ ∎
+
+-- The semantic counterpart of serializability (the one that we don't want to use directly)
+serializable-eval : Schedule → Set
+serializable-eval p = Σ[ (p₁ , p₂) ∈ Transaction × Transaction ] (p ≈ seq-scheduler p₁ p₂)
+
+-- The example schedule is serialisable wrt. store semantics as a consequence of the soundness theorem
+ex-serializable-eval : ∀ {a : ℕ} → serializable-eval (ex-interleaving a)
+ex-serializable-eval {a = a} =  ( (rw-prog₁ a , rw-prog₁ a) , trace-sem-sound (ex-trace-equiv {a = a}))
