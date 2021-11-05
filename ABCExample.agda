@@ -4,6 +4,7 @@ module ABCExample  where
 
 open import TraceMonoid
 open import Cubical.Foundations.Prelude
+open import Cubical.Relation.Nullary
 
 
 --| alphabet

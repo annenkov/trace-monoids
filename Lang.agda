@@ -1,6 +1,6 @@
 {-# OPTIONS --cubical #-}
 
-module LangAlt  where
+module Lang  where
 
 open import TraceMonoid
 
@@ -82,7 +82,7 @@ instance
                      #-sym = #-sym }
 
 Trace : Set
-Trace = Pcm Event _#_
+Trace = FreePcm Event _#_
 
 Schedule = List Event
 Map = Location → Maybe ℕ
@@ -196,7 +196,7 @@ ex₂-eval : xy-to-list (eval ex2 init-regs ∅) ≡ ((0 , just 1) ∷ (1 , just
 ex₂-eval = refl
 
 
-of-list : {A : Set} -> {R : A → A → Set } -> {{_ : IsIndependency R}} -> List A → Pcm A R
+of-list : {A : Set} -> {R : A → A → Set } -> {{_ : IsIndependency R}} -> List A → FreePcm A R
 of-list [] = ε
 of-list (x ∷ xs) = x ̇ of-list xs
 
