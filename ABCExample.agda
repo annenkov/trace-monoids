@@ -1,9 +1,9 @@
-{-# OPTIONS --cubical #-}
+{-# OPTIONS --cubical -W noNoEquivWhenSplitting #-}
 
 module ABCExample  where
 
 open import TraceMonoid
-open import Cubical.Foundations.Prelude
+open import Cubical.Foundations.Prelude hiding ( _∙_ )
 open import Cubical.Relation.Nullary
 
 
@@ -28,23 +28,23 @@ instance
   #L-indep = record { #-irrefl = #L-irrefl _;
                       #-sym = λ { AB → BA ; BA → AB }}
 
-example1 : C ̇ A ̇ B ̇ ε ≡ C ̇ B ̇ A ̇ ε
-example1 = pcm-cong-head {s₁ = C ̇ ε} (pcm-comm A B ε {AB})
+example1 : C ∙ A ∙ B ∙ ε ≡ C ∙ B ∙ A ∙ ε
+example1 = pcm-cong-head {s₁ = C ∙ ε} (pcm-comm A B ε {AB})
 
-example2 : C ̇ A ̇ B ̇ B ̇ A ̇ ε ≡ C ̇ A ̇ A ̇ B ̇ B ̇ ε
-example2 = pcm-cong-head {s₁ = C ̇ A ̇ ε}
-           (B ̇ B ̇ A ̇ ε
-            ≡⟨ cong (B ̇_) (pcm-comm B A ε {BA}) ⟩
-            B ̇ A ̇ B ̇ ε
+example2 : C ∙ A ∙ B ∙ B ∙ A ∙ ε ≡ C ∙ A ∙ A ∙ B ∙ B ∙ ε
+example2 = pcm-cong-head {s₁ = C ∙ A ∙ ε}
+           (B ∙ B ∙ A ∙ ε
+            ≡⟨ cong (B ∙_) (pcm-comm B A ε {BA}) ⟩
+            B ∙ A ∙ B ∙ ε
             ≡⟨ pcm-comm _ _ _ {BA} ⟩
-            A ̇ B ̇ B ̇ ε ∎)
+            A ∙ B ∙ B ∙ ε ∎)
 
-example-B-bubbles-up : A ̇ A ̇ A ̇ B ̇ ε ≡ B ̇ A ̇ A ̇ A ̇ ε
+example-B-bubbles-up : A ∙ A ∙ A ∙ B ∙ ε ≡ B ∙ A ∙ A ∙ A ∙ ε
 example-B-bubbles-up =
-  sym (B ̇ A ̇ A ̇ A ̇ ε
+  sym (B ∙ A ∙ A ∙ A ∙ ε
        ≡⟨ pcm-comm _ _ _ {BA} ⟩
-       A ̇ B ̇ A ̇ A ̇ ε
-       ≡⟨ cong (A ̇_) (pcm-comm _ _ _ {BA}) ⟩
-       A ̇ A ̇ B ̇ A ̇ ε
-       ≡⟨ pcm-cong-head {s₁ = A ̇ A ̇ ε} (pcm-comm _ _ _ {BA}) ⟩
-       A ̇ A ̇ A ̇ B ̇ ε ∎)
+       A ∙ B ∙ A ∙ A ∙ ε
+       ≡⟨ cong (A ∙_) (pcm-comm _ _ _ {BA}) ⟩
+       A ∙ A ∙ B ∙ A ∙ ε
+       ≡⟨ pcm-cong-head {s₁ = A ∙ A ∙ ε} (pcm-comm _ _ _ {BA}) ⟩
+       A ∙ A ∙ A ∙ B ∙ ε ∎)

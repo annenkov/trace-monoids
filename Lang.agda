@@ -1,17 +1,17 @@
-{-# OPTIONS --cubical #-}
+{-# OPTIONS --cubical -W noNoEquivWhenSplitting #-}
 
 module Lang  where
 
 open import TraceMonoid
 
-open import Cubical.Foundations.Everything
+open import Cubical.Foundations.Everything hiding (_∙_)
 open import Cubical.Data.List hiding ([_])
 open import Cubical.Data.Sigma
 open import Cubical.Data.Maybe
 open import Cubical.Data.Empty as ⊥
 open import Cubical.Data.Nat
 open import Cubical.Data.Bool hiding (_≟_)
-open import Cubical.Foundations.Prelude
+open import Cubical.Foundations.Prelude renaming (_∙_ to compPath)
 open import Cubical.Algebra.Monoid
 open import Cubical.Relation.Nullary
 open import Cubical.Relation.Nullary.DecidableEq
@@ -35,8 +35,8 @@ infix 22 `_
 Location = ℕ
 
 data Action : Set where
-  ReadLoc : Location → Action
-  WriteLoc : Location → Exp → Action
+  Ṙ : Location → Action
+  Ẇ : Location → Exp → Action
 
 Transaction = List Action
 
@@ -50,36 +50,45 @@ a ≠ b = a ≡ b → ⊥
 ≠-sym : ∀ {A : Set} {a b : A} → a ≠ b → b ≠ a
 ≠-sym np q =  np (sym q)
 
-data _#'_ : Action → Action → Set where
-  #'-RR : ∀ l₁ l₂ → ReadLoc l₁ #' ReadLoc l₂
-  #'-WW : ∀ l₁ l₂ e₁ e₂ → l₁ ≠ l₂ → WriteLoc l₁ e₁ #' WriteLoc l₂ e₂
-  #'-WR : ∀ l₁ l₂ e → l₁ ≠ l₂ → WriteLoc l₁ e #' ReadLoc l₂
-  #'-RW : ∀ l₁ l₂ e → l₁ ≠ l₂ → ReadLoc l₁ #' WriteLoc l₂ e
+data _#ₐ_ : Action → Action → Set where
+  #ₐ-RR : ∀ l₁ l₂ → Ṙ l₁ #ₐ Ṙ l₂
+  #ₐ-WW : ∀ l₁ l₂ e₁ e₂ → l₁ ≠ l₂ → Ẇ l₁ e₁ #ₐ Ẇ l₂ e₂
+  #ₐ-WR : ∀ l₁ l₂ e → l₁ ≠ l₂ → Ẇ l₁ e #ₐ Ṙ l₂
+  #ₐ-RW : ∀ l₁ l₂ e → l₁ ≠ l₂ → Ṙ l₁ #ₐ Ẇ l₂ e
 
 Event = ℕ × Action
 
 data _#_ : Event → Event → Set where
-  #-neq-tr : ∀ (e₁ e₂ : Event)
-           → fst e₁ ≠ fst e₂
-           → snd e₁ #' snd e₂
-           → e₁ # e₂
+  #-neq-tr : ∀ (e₁ e₂ : Event) → fst e₁ ≠ fst e₂ → snd e₁ #ₐ snd e₂ → e₁ # e₂
 
 #-irrefl : ∀ (x : Event) → ¬ (x # x)
 #-irrefl (i , e) (#-neq-tr _ _ p _) = p refl
 
-#'-sym : ∀ {a₁ a₂ : Action} → a₁ #' a₂ → a₂ #' a₁
-#'-sym (#'-RR l₁ l₂) = #'-RR l₂ l₁
-#'-sym (#'-WW l₁ l₂ e₁ e₂ x) = #'-WW l₂ l₁ e₂ e₁ (≠-sym x)
-#'-sym (#'-WR l₁ l₂ e x) = #'-RW l₂ l₁ e (≠-sym x)
-#'-sym (#'-RW l₁ l₂ e x) = #'-WR l₂ l₁ e (≠-sym x)
+#ₐ-sym : ∀ {a₁ a₂ : Action} → a₁ #ₐ a₂ → a₂ #ₐ a₁
+#ₐ-sym (#ₐ-RR l₁ l₂) = #ₐ-RR l₂ l₁
+#ₐ-sym (#ₐ-WW l₁ l₂ e₁ e₂ x) = #ₐ-WW l₂ l₁ e₂ e₁ (≠-sym x)
+#ₐ-sym (#ₐ-WR l₁ l₂ e x) = #ₐ-RW l₂ l₁ e (≠-sym x)
+#ₐ-sym (#ₐ-RW l₁ l₂ e x) = #ₐ-WR l₂ l₁ e (≠-sym x)
 
 #-sym : ∀ {e₁ e₂ : Event} → e₁ # e₂ → e₂ # e₁
-#-sym (#-neq-tr _ _ x y) = #-neq-tr _ _ (≠-sym x) (#'-sym y)
+#-sym (#-neq-tr _ _ x y) = #-neq-tr _ _ (≠-sym x) (#ₐ-sym y)
 
 instance
-  #-indep : IsIndependency _#_
+  #-indep : IsIndependence _#_
   #-indep = record { #-irrefl = #-irrefl _;
                      #-sym = #-sym }
+
+-- Two actions conflict, if they operate on the same location and one of the actions is Ẇ
+data IsConflict : ∀ (a₁ a₂ : Action) → Set where
+  is-conflict-rw : ∀ l e → IsConflict (Ṙ l) (Ẇ l e)
+  is-conflict-wr : ∀ l e → IsConflict (Ẇ l e) (Ṙ l)
+  is-conflict-ww : ∀ l e₁ e₂ → IsConflict (Ẇ l e₁) (Ẇ l e₂)
+
+#-not-IsConflict : ∀ {e₁ e₂ : Event} → e₁ # e₂ → ¬ IsConflict (snd e₁) (snd e₂)
+#-not-IsConflict (#-neq-tr _ _ neq (#ₐ-RR l₁ l₂)) ()
+#-not-IsConflict (#-neq-tr _ _ neq (#ₐ-WW l₁ .l₁ e₁ e₂ x)) (is-conflict-ww .l₁ .e₁ .e₂) = x refl
+#-not-IsConflict (#-neq-tr _ _ neq (#ₐ-WR l₁ .l₁ e x)) (is-conflict-wr .l₁ .e) = x refl
+#-not-IsConflict (#-neq-tr _ _ neq (#ₐ-RW l₁ .l₁ e x)) (is-conflict-rw .l₁ .e) = x refl
 
 Trace : Set
 Trace = FreePcm Event _#_
@@ -148,8 +157,8 @@ evalE v (` i) = i
 -- Take a global store, registers and return a potentially updated global state
 eval : Schedule → Registers → Store  → Store
 eval [] ρ σ   = σ
-eval ((i , ReadLoc l) ∷ xs) ρ σ  = eval xs (set-reg ρ i (get-default σ l)) σ
-eval ((i , WriteLoc l e) ∷ xs) ρ σ  = eval xs ρ ([ l ~> evalE (ρ i) e ] ⊛ σ)
+eval ((i , Ṙ l) ∷ xs) ρ σ  = eval xs (set-reg ρ i (get-default σ l)) σ
+eval ((i , Ẇ l e) ∷ xs) ρ σ  = eval xs ρ ([ l ~> evalE (ρ i) e ] ⊛ σ)
 
 mk-sch : ℕ → Transaction → Schedule
 mk-sch i xs = map (λ c → (i , c)) xs
@@ -175,7 +184,7 @@ A = 0
 B = 1
 
 rw-prog₁ : ℕ → List Action
-rw-prog₁ a = ReadLoc A ﹔ WriteLoc A (Load ∔ ` a) ﹔(ReadLoc  B) ﹔( WriteLoc B (Load ∔ ` 10)) ﹔ end
+rw-prog₁ a = Ṙ A ﹔ Ẇ A (Load ∔ ` a) ﹔(Ṙ  B) ﹔( Ẇ B (Load ∔ ` 10)) ﹔ end
 
 ex1 : Schedule
 ex1 = mk-sch 0 (rw-prog₁ 1)
@@ -187,7 +196,7 @@ ex-eval : xy-to-list (eval ex1 init-regs ∅) ≡ ((0 , just 1) ∷ (1 , just 10
 ex-eval = refl
 
 rw-prog₂ : List Action
-rw-prog₂ = ReadLoc A ﹔ WriteLoc A (Load ∔ ` 1) ﹔(ReadLoc  A) ﹔( WriteLoc B (Load ∔ ` 10)) ﹔ end
+rw-prog₂ = Ṙ A ﹔ Ẇ A (Load ∔ ` 1) ﹔(Ṙ  A) ﹔( Ẇ B (Load ∔ ` 10)) ﹔ end
 
 ex2 : Schedule
 ex2 = mk-sch 0 rw-prog₂
@@ -196,14 +205,13 @@ ex₂-eval : xy-to-list (eval ex2 init-regs ∅) ≡ ((0 , just 1) ∷ (1 , just
 ex₂-eval = refl
 
 
-of-list : {A : Set} -> {R : A → A → Set } -> {{_ : IsIndependency R}} -> List A → FreePcm A R
+of-list : {A : Set} -> {R : A → A → Set } -> {{_ : IsIndependence R}} -> List A → FreePcm A R
 of-list [] = ε
-of-list (x ∷ xs) = x ̇ of-list xs
+of-list (x ∷ xs) = x ∙ of-list xs
 
 -- Interpretation of the Read-Write language as a trace
 ⟦_⟧ : Schedule → Trace
 ⟦ s ⟧ = of-list s
-
 
 -- Trace-equivalent schedules are just schedules with equal traces
 _∼_ : Schedule → Schedule → Set
@@ -212,31 +220,62 @@ p₁ ∼ p₂ = ⟦ p₁ ⟧ ≡ ⟦ p₂ ⟧
 
 -- A schedule is serializable if it is trace-equivalent to a sequental composition of the two schedules
 serializable : Schedule → Set
-serializable p = Σ[ (p₁ , p₂) ∈ Transaction × Transaction ] (⟦ p ⟧ ≡ ⟦ seq-scheduler p₁ p₂ ⟧)
+serializable p = Σ[(p₁ , p₂)∈ Transaction × Transaction ] (⟦ p ⟧ ≡ ⟦ seq-scheduler p₁ p₂ ⟧)
 
--- Semantically equivalent programs result in the same store (we ignore the state of the registers)
+-- Semantically equivalent programs result in the same store
 _≈_ : Schedule → Schedule → Set
 p₁ ≈ p₂ = eval p₁ ≡ eval p₂
 
-ex-interleaving : ℕ → Schedule
-ex-interleaving a =
-  (0 , ReadLoc A) ﹔ (0 , WriteLoc A (Load ∔ ` a)) ﹔(0 , ReadLoc  B) ﹔(1 , ReadLoc A) ﹔ (1 , WriteLoc A (Load ∔ ` a)) ﹔
-  (0 , WriteLoc B (Load ∔ ` 10)) ﹔ (1 , ReadLoc  B) ﹔(1 , WriteLoc B (Load ∔ ` 10)) ﹔
-  end
+infix 40 T₀:_
+infix 40 T₁:_
 
-infix 40 _%T₀
-infix 40 _%T₁
 
-_%T₀ : Action → ℕ × Action
-e %T₀ = (0 , e)
+T₀:_ : Action → ℕ × Action
+T₀: e = (0 , e)
 
-_%T₁ : Action → ℕ × Action
-e %T₁ = (1 , e)
+T₁:_ : Action → ℕ × Action
+T₁: e = (1 , e)
 
+
+-- a simple example of a schedule with interleaving
+ex-interleaving-simple : Schedule
+ex-interleaving-simple =
+  T₀: Ṙ A ﹔ T₁: Ẇ B (` 10) ﹔ T₀: Ẇ A (Load ∔ ` 1) ﹔ T₁: Ẇ A (` 2) ﹔ end
 
 -- The schedule can be rewritten in the standard "textbook" 2-dimentional notation as follows
 -- (we asssume that each transaction commits immedately after the last operation).
 
+--------------------------------|
+--| T₀ : RA      WA      Commit |
+--| T₁ :     WB      WA  Commit |
+--------------------------------|
+-- note that that RB (Read B) can be executed at some point beteween RA and WA (Write A). And WA, in turn can be executed between RB and WB.
+-- We would like to know whether it's valid, that is, the outcome of the two transactions is the same if we run them sequentially (one after another) is some order.
+-- Informally, it's clear that reading B and writing A are independent, so we can swap them ending with
+---------------------------------|
+--| T₀ : RA  WA           Commit |
+--| T₁ :         WB  WA   Commit |
+---------------------------------|
+
+T₀-acts : Transaction
+T₀-acts = Ṙ A ﹔ Ẇ A (Load ∔ ` 1) ﹔ end
+
+T₁-acts : Transaction
+T₁-acts = Ẇ B (` 10) ﹔ Ẇ A (` 2) ﹔ end
+
+ex-simple-interleaving-trace-equiv :
+  ex-interleaving-simple ∼ seq-scheduler T₀-acts T₁-acts
+ex-simple-interleaving-trace-equiv = pcm-cong-head {s₁ =  T₀: Ṙ A ∙ ε } (pcm-comm _ _ _ (#-neq-tr _ _ snotz (#ₐ-WW _ _ _ _ (≠-sym znots))))
+
+
+-- more complex interleaving
+ex-interleaving : ℕ → Schedule
+ex-interleaving a =
+  (0 , Ṙ A) ﹔ (0 , Ẇ A (Load ∔ ` a)) ﹔(0 , Ṙ  B) ﹔(1 , Ṙ A) ﹔ (1 , Ẇ A (Load ∔ ` a)) ﹔
+  (0 , Ẇ B (Load ∔ ` 10)) ﹔ (1 , Ṙ  B) ﹔(1 , Ẇ B (Load ∔ ` 10)) ﹔
+  end
+
+-- in the texbook notations:
 -----------------------------------------|
 --| T₀ : RA  WA  RB          WB          |
 --| T₁ :             RA  WA      RB  WB  |
@@ -253,16 +292,17 @@ e %T₁ = (1 , e)
 
 
 ex-trace-equiv : {a : ℕ} → ex-interleaving a ∼ seq-scheduler (rw-prog₁ a) (rw-prog₁ a)
-ex-trace-equiv = pcm-cong-head {s₁ = ReadLoc A %T₀ ̇ WriteLoc A _ %T₀ ̇ ReadLoc B %T₀ ̇ ε}
-                 (ReadLoc A %T₁ ̇ WriteLoc A _ %T₁ ̇ WriteLoc B _ %T₀ ̇ ReadLoc B %T₁ ̇ WriteLoc B _ %T₁ ̇ ε
-                  ≡⟨ cong (ReadLoc A %T₁ ̇_) (pcm-comm _ _ _ {#-neq-tr _ _ snotz (#'-WW _ _ _ _ znots)}) ⟩
-                  ReadLoc A %T₁ ̇ WriteLoc B _ %T₀ ̇ WriteLoc A _ %T₁ ̇ ReadLoc B %T₁ ̇ WriteLoc B _ %T₁ ̇ ε
-                  ≡⟨ (pcm-comm _ _ _ {#-neq-tr _ _ snotz (#'-RW _ _ _ znots)}) ⟩
-                  WriteLoc B _ %T₀ ̇ ReadLoc A %T₁ ̇ WriteLoc A _ %T₁ ̇ ReadLoc B %T₁ ̇ WriteLoc B _ %T₁ ̇ ε ∎)
+ex-trace-equiv = pcm-cong-head {s₁ = T₀: Ṙ A  ∙ T₀: Ẇ A _ ∙ T₀: Ṙ B ∙ ε}
+                 (T₁: Ṙ A  ∙ T₁: Ẇ A _ ∙ T₀: Ẇ B _ ∙ T₁: Ṙ B ∙ T₁: Ẇ B _ ∙ ε
+                  ≡⟨ cong (T₁: Ṙ A ∙_) (pcm-comm _ _ _ (#-neq-tr _ _ snotz (#ₐ-WW _ _ _ _ znots))) ⟩
+                  T₁: Ṙ A ∙ T₀: Ẇ B _ ∙ T₁: Ẇ A _ ∙ T₁: Ṙ B ∙ T₁: Ẇ B _ ∙ ε
+                  ≡⟨ (pcm-comm _ _ _ (#-neq-tr _ _ snotz (#ₐ-RW _ _ _ znots))) ⟩
+                  T₀: Ẇ B _ ∙ T₁: Ṙ A ∙ T₁: Ẇ A _ ∙ T₁: Ṙ B  ∙ T₁: Ẇ B _ ∙ ε ∎)
 
 -- The interleaved schedule is serializable, therefore safe
 ex-serializable : ∀ {a : ℕ} → serializable (ex-interleaving a)
 ex-serializable {a = a} =  ( (rw-prog₁ a , rw-prog₁ a) , ex-trace-equiv {a = a})
+
 
 -- Some machinery for maintaning information during pattern-matching, it's standard, but yet missing in the distribution of Cubical Agda (maybe it's updated now?)
 record Reveal_·_is_ {a b} {A : Set a} {B : A → Set b}
@@ -289,7 +329,7 @@ inspect f x = [ refl ]
 
 set-reg-≠-regs : ∀ {j i₁ i₂ v₁ v₂ ρ} → i₁ ≠ i₂ → set-reg (set-reg ρ i₁ v₁) i₂ v₂ j ≡ set-reg (set-reg ρ i₂ v₂) i₁ v₁ j
 set-reg-≠-regs {j} {i₁} {i₂} {v₁} {v₂} {ρ} neq with (i₁ == j) | inspect (λ x → i₁ == x) j  | i₂ == j | inspect (λ x → i₂ == x) j
-... | true  | [ eq1 ] | true  | [ eq2 ] = ⊥.elim (neq ((ℕ==→≡ eq1) ∙ sym (ℕ==→≡ eq2)))
+... | true  | [ eq1 ] | true  | [ eq2 ] = ⊥.elim (neq (compPath (ℕ==→≡ eq1) (sym (ℕ==→≡ eq2))))
 ... | true  | [ eq1 ] | false | [ eq2 ] = refl
 ... | false | _ | true  | _ = refl
 ... | false | _ | false | _ = refl
@@ -309,7 +349,7 @@ set-reg-irrel {ρ} {i₁} {i₂} {v} neq with (i₁ == i₂)| inspect (λ x → 
 
 update-commutes : ∀ {l₁ v₁ l₂ v₂} l → l₁ ≠ l₂ → ([ l₁ ~> v₁ ] ⊛ ([ l₂ ~> v₂ ])) l ≡ ([ l₂ ~> v₂ ] ⊛ ([ l₁ ~> v₁ ])) l
 update-commutes {l₁} {v₁} {l₂} {v₂} l neq with (l₁ == l) | inspect (λ x → l₁ == x) l | (l₂ == l) | inspect (l₂ ==_) l
-... | true  | [ eq1 ] | true  | [ eq2 ] = ⊥.elim (neq ((ℕ==→≡ eq1) ∙ sym (ℕ==→≡ eq2)))
+... | true  | [ eq1 ] | true  | [ eq2 ] = ⊥.elim (neq (compPath (ℕ==→≡ eq1) (sym (ℕ==→≡ eq2))))
 ... | true  | [ eq1 ] | false | [ eq2 ]  = refl
 ... | false  | [ eq1 ] | true | [ eq2 ]  = refl
 ... | false  | [ eq1 ] | false | [ eq2 ]  = refl
@@ -330,29 +370,29 @@ postulate
       (Registers → Store → Map)
 
 eval-t-rec : Event → (Registers → Store → Map) → Registers → Store → Map
-eval-t-rec (i , ReadLoc l) rec ρ σ = rec (set-reg ρ i (get-default σ l)) σ
-eval-t-rec (i , WriteLoc l e) rec ρ σ = rec ρ ([ l ~> evalE (ρ i) e ] ⊛ σ)
+eval-t-rec (i , Ṙ l) rec ρ σ = rec (set-reg ρ i (get-default σ l)) σ
+eval-t-rec (i , Ẇ l e) rec ρ σ = rec ρ ([ l ~> evalE (ρ i) e ] ⊛ σ)
 
 eval-t-commute : ∀ (x y : Event) (tr : Trace) →
                  (rec :  Registers → Store → Map) →
                  x # y →
                  eval-t-rec x (eval-t-rec y rec) ≡ eval-t-rec y (eval-t-rec x rec)
-eval-t-commute (i₁ , _) (i₂ , _) tr rec (#-neq-tr _ _ neq (#'-RR l₁ l₂)) =
+eval-t-commute (i₁ , _) (i₂ , _) tr rec (#-neq-tr _ _ neq (#ₐ-RR l₁ l₂)) =
                         funExt (λ _ → funExt λ _ → cong₂ rec (set-reg-≠-regs-ext neq) refl)
-eval-t-commute (i₁ , _) (i₂ , _) tr rec (#-neq-tr _ _ neq (#'-WW l₁ l₂ e₁ e₂ x)) =
+eval-t-commute (i₁ , _) (i₂ , _) tr rec (#-neq-tr _ _ neq (#ₐ-WW l₁ l₂ e₁ e₂ x)) =
                         funExt (λ ρ → funExt λ σ → cong (rec ρ)
                                ( [ l₂ ~> evalE (ρ i₂) e₂ ] ⊛ ([ l₁ ~> evalE (ρ i₁) e₁ ] ⊛ σ) ≡⟨ ⊛-assoc [ l₂ ~> evalE (ρ i₂) e₂ ] _ _ ⟩
                                 ([ l₂ ~> evalE (ρ i₂) e₂ ] ⊛ [ l₁ ~> evalE (ρ i₁) e₁ ]) ⊛ σ  ≡⟨ ⊛-cong (update-commutes-ext (≠-sym x)) refl ⟩
                                 ([ l₁ ~> evalE (ρ i₁) e₁ ] ⊛ [ l₂ ~> evalE (ρ i₂) e₂ ]) ⊛ σ  ≡⟨ sym (⊛-assoc ([ l₁ ~> evalE (ρ i₁) e₁ ]) _ _) ⟩
                                  [ l₁ ~> evalE (ρ i₁) e₁ ] ⊛ ([ l₂ ~> evalE (ρ i₂) e₂ ] ⊛ σ) ∎))
-eval-t-commute (i₁ , _) (i₂ , _) tr rec (#-neq-tr _ _ neq (#'-WR l₁ l₂ e x)) =
+eval-t-commute (i₁ , _) (i₂ , _) tr rec (#-neq-tr _ _ neq (#ₐ-WR l₁ l₂ e x)) =
                         funExt (λ ρ →
                           funExt λ σ →
                             cong₂ rec (funExt λ v →
                               cong₂ (set-reg ρ i₂)
                                     ((get-default-≠ {σ = σ} x)) refl)
                                     (cong (λ x → [ l₁ ~> evalE x e ] ⊛ σ) (sym (set-reg-irrel {ρ = ρ} (≠-sym neq)))))
-eval-t-commute (i₁ , _) (i₂ , _) tr rec (#-neq-tr _ _ neq (#'-RW l₁ l₂ e x)) =
+eval-t-commute (i₁ , _) (i₂ , _) tr rec (#-neq-tr _ _ neq (#ₐ-RW l₁ l₂ e x)) =
                         funExt (λ ρ →
                           funExt λ σ →
                             cong₂ rec (cong (set-reg ρ i₁) (sym (get-default-≠ {σ = σ} (≠-sym x))) )
@@ -368,8 +408,8 @@ eval-t tr =
 -- The store semantics on lists of commands gives the same result as the semantics on traces
 eval-eval-t : ∀ (s : Schedule) (ρ : Registers) (σ : Store) (l : Location) → eval s ρ σ l ≡ eval-t ⟦ s ⟧ ρ σ l
 eval-eval-t [] ρ σ l = refl
-eval-eval-t ((i , ReadLoc l1) ∷ xs) ρ σ  l = eval-eval-t xs _ _ _
-eval-eval-t ((i , WriteLoc l1 e) ∷ xs) ρ σ l =  eval-eval-t xs _ _ _
+eval-eval-t ((i , Ṙ l1) ∷ xs) ρ σ  l = eval-eval-t xs _ _ _
+eval-eval-t ((i , Ẇ l1 e) ∷ xs) ρ σ l =  eval-eval-t xs _ _ _
 
 eval-eval-t-ext : ∀ (s : Schedule) → eval s ≡ eval-t ⟦ s ⟧
 eval-eval-t-ext s = funExt (λ σ → funExt (λ ρ → funExt (λ l → eval-eval-t s σ ρ l)))
