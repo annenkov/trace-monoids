@@ -364,10 +364,8 @@ update-commutes-ext neq = funExt (λ l → update-commutes l neq)
 ⊛-cong-assoc : ∀ {σ₁ σ₂ σ₃ σ₄ σ} → σ₁ ≡ σ₂ → σ₃ ≡ σ₄ → σ₁ ⊛ (σ₃ ⊛ σ) ≡ σ₂ ⊛ (σ₄ ⊛ σ)
 ⊛-cong-assoc p q = ⊛-cong p (⊛-cong q refl )
 
-postulate
-  -- TODO: use stdlib to show this (e.g. HLevels.isSetΠ and properties of Maybe)
-  is-set-eval-t : isSet
-      (Registers → Store → Map)
+is-set-eval-t : isSet (Registers → Store → Map)
+is-set-eval-t = isSetΠ2 (λ _ _ → isSetΠ (λ _ → isOfHLevelMaybe zero isSetℕ))
 
 eval-t-rec : Event → (Registers → Store → Map) → Registers → Store → Map
 eval-t-rec (i , Ṙ l) rec ρ σ = rec (set-reg ρ i (get-default σ l)) σ
