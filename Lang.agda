@@ -9,7 +9,7 @@ open import Cubical.Data.List hiding ([_])
 open import Cubical.Data.Sigma
 open import Cubical.Data.Maybe
 open import Cubical.Data.Empty as ⊥
-open import Cubical.Data.Nat
+open import Cubical.Data.Nat hiding (_∸_)
 open import Cubical.Data.Bool hiding (_≟_)
 open import Cubical.Foundations.Prelude renaming (_∙_ to compPath)
 open import Cubical.Algebra.Monoid
@@ -27,6 +27,7 @@ open import Agda.Builtin.Nat
 
 data Exp : Set where
   _∔_ : Exp → Exp → Exp -- addition
+  _∸_ : Exp → Exp → Exp -- addition
   Load : Exp              -- load a thread-local variable
   `_ : ℕ → Exp          -- nat literal
 
@@ -151,14 +152,15 @@ get-default σ l with σ l
 
 evalE : RegisterVal → Exp → ℕ
 evalE v (e₁ ∔ e₂) = evalE v e₁ + evalE v e₂
+evalE v (e₁ ∸ e₂) = evalE v e₁ - evalE v e₂
 evalE v Load = v
 evalE v (` i) = i
 
--- Take a global store, registers and return a potentially updated global state
-eval : Schedule → Registers → Store  → Store
-eval [] ρ σ   = σ
-eval ((i , Ṙ l) ∷ xs) ρ σ  = eval xs (set-reg ρ i (get-default σ l)) σ
-eval ((i , Ẇ l e) ∷ xs) ρ σ  = eval xs ρ ([ l ~> evalE (ρ i) e ] ⊛ σ)
+-- Take an expresison eval function, global store, registers and return a potentially updated global state
+eval : (RegisterVal → Exp → ℕ) → Schedule → Registers → Store  → Store
+eval evalExp [] ρ σ   = σ
+eval evalExp ((i , Ṙ l) ∷ xs) ρ σ  = eval evalExp xs (set-reg ρ i (get-default σ l)) σ
+eval evalExp ((i , Ẇ l e) ∷ xs) ρ σ  = eval evalExp xs ρ ([ l ~> evalExp (ρ i) e ] ⊛ σ)
 
 mk-sch : ℕ → Transaction → Schedule
 mk-sch i xs = map (λ c → (i , c)) xs
@@ -169,8 +171,8 @@ mk-sch i xs = map (λ c → (i , c)) xs
 seq-scheduler : Transaction → Transaction → Schedule
 seq-scheduler xs ys = mk-sch 0 xs ++ mk-sch 1 ys
 
-eval-seq : Store → Registers → Transaction × Transaction → Store
-eval-seq σ ρ (t₁ , t₂) = eval (seq-scheduler t₁ t₂) ρ σ
+eval-seq : (RegisterVal → Exp → ℕ) → Store → Registers → Transaction × Transaction → Store
+eval-seq evalExp σ ρ (t₁ , t₂) = eval evalExp (seq-scheduler t₁ t₂) ρ σ
 
 infixr 5 _﹔_
 
@@ -192,7 +194,7 @@ ex1 = mk-sch 0 (rw-prog₁ 1)
 xy-to-list : Store → List (ℕ × Maybe ℕ)
 xy-to-list σ = (0 , σ 0) ∷ (1 , σ 1) ∷ []
 
-ex-eval : xy-to-list (eval ex1 init-regs ∅) ≡ ((0 , just 1) ∷ (1 , just 10) ∷ [])
+ex-eval : xy-to-list (eval evalE ex1 init-regs ∅) ≡ ((0 , just 1) ∷ (1 , just 10) ∷ [])
 ex-eval = refl
 
 rw-prog₂ : List Action
@@ -201,7 +203,7 @@ rw-prog₂ = Ṙ A ﹔ Ẇ A (Load ∔ ` 1) ﹔(Ṙ  A) ﹔( Ẇ B (Load ∔ ` 1
 ex2 : Schedule
 ex2 = mk-sch 0 rw-prog₂
 
-ex₂-eval : xy-to-list (eval ex2 init-regs ∅) ≡ ((0 , just 1) ∷ (1 , just 11) ∷ [])
+ex₂-eval : xy-to-list (eval evalE ex2 init-regs ∅) ≡ ((0 , just 1) ∷ (1 , just 11) ∷ [])
 ex₂-eval = refl
 
 
@@ -224,7 +226,7 @@ serializable p = Σ[(p₁ , p₂)∈ Transaction × Transaction ] (⟦ p ⟧ ≡
 
 -- Semantically equivalent programs result in the same store
 _≈_ : Schedule → Schedule → Set
-p₁ ≈ p₂ = eval p₁ ≡ eval p₂
+p₁ ≈ p₂ = (λ (f : RegisterVal → Exp → ℕ) → eval f p₁) ≡ (λ (f : RegisterVal → Exp → ℕ) → eval f p₂)
 
 infix 40 T₀:_
 infix 40 T₁:_
@@ -367,63 +369,66 @@ update-commutes-ext neq = funExt (λ l → update-commutes l neq)
 is-set-eval-t : isSet (Registers → Store → Map)
 is-set-eval-t = isSetΠ2 (λ _ _ → isSetΠ (λ _ → isOfHLevelMaybe zero isSetℕ))
 
-eval-t-rec : Event → (Registers → Store → Map) → Registers → Store → Map
-eval-t-rec (i , Ṙ l) rec ρ σ = rec (set-reg ρ i (get-default σ l)) σ
-eval-t-rec (i , Ẇ l e) rec ρ σ = rec ρ ([ l ~> evalE (ρ i) e ] ⊛ σ)
+eval-t-rec : (RegisterVal → Exp → ℕ) → Event → (Registers → Store → Map) → Registers → Store → Map
+eval-t-rec evalExp (i , Ṙ l) rec ρ σ = rec (set-reg ρ i (get-default σ l)) σ
+eval-t-rec evalExp (i , Ẇ l e) rec ρ σ = rec ρ ([ l ~> evalExp (ρ i) e ] ⊛ σ)
 
-eval-t-commute : ∀ (x y : Event) (tr : Trace) →
+eval-t-commute : ∀ (evalExp : RegisterVal → Exp → ℕ) →
+                 (x y : Event) (tr : Trace) →
                  (rec :  Registers → Store → Map) →
                  x # y →
-                 eval-t-rec x (eval-t-rec y rec) ≡ eval-t-rec y (eval-t-rec x rec)
-eval-t-commute (i₁ , _) (i₂ , _) tr rec (#-neq-tr _ _ neq (#ₐ-RR l₁ l₂)) =
+                 eval-t-rec evalExp x (eval-t-rec evalExp y rec) ≡ eval-t-rec evalExp y (eval-t-rec evalExp x rec)
+eval-t-commute _ (i₁ , _) (i₂ , _) tr rec (#-neq-tr _ _ neq (#ₐ-RR l₁ l₂)) =
                         funExt (λ _ → funExt λ _ → cong₂ rec (set-reg-≠-regs-ext neq) refl)
-eval-t-commute (i₁ , _) (i₂ , _) tr rec (#-neq-tr _ _ neq (#ₐ-WW l₁ l₂ e₁ e₂ x)) =
+eval-t-commute f (i₁ , _) (i₂ , _) tr rec (#-neq-tr _ _ neq (#ₐ-WW l₁ l₂ e₁ e₂ x)) =
                         funExt (λ ρ → funExt λ σ → cong (rec ρ)
-                               ( [ l₂ ~> evalE (ρ i₂) e₂ ] ⊛ ([ l₁ ~> evalE (ρ i₁) e₁ ] ⊛ σ) ≡⟨ ⊛-assoc [ l₂ ~> evalE (ρ i₂) e₂ ] _ _ ⟩
-                                ([ l₂ ~> evalE (ρ i₂) e₂ ] ⊛ [ l₁ ~> evalE (ρ i₁) e₁ ]) ⊛ σ  ≡⟨ ⊛-cong (update-commutes-ext (≠-sym x)) refl ⟩
-                                ([ l₁ ~> evalE (ρ i₁) e₁ ] ⊛ [ l₂ ~> evalE (ρ i₂) e₂ ]) ⊛ σ  ≡⟨ sym (⊛-assoc ([ l₁ ~> evalE (ρ i₁) e₁ ]) _ _) ⟩
-                                 [ l₁ ~> evalE (ρ i₁) e₁ ] ⊛ ([ l₂ ~> evalE (ρ i₂) e₂ ] ⊛ σ) ∎))
-eval-t-commute (i₁ , _) (i₂ , _) tr rec (#-neq-tr _ _ neq (#ₐ-WR l₁ l₂ e x)) =
+                               ( [ l₂ ~> f (ρ i₂) e₂ ] ⊛ ([ l₁ ~> f (ρ i₁) e₁ ] ⊛ σ) ≡⟨ ⊛-assoc [ l₂ ~> f (ρ i₂) e₂ ] _ _ ⟩
+                                ([ l₂ ~> f (ρ i₂) e₂ ] ⊛ [ l₁ ~> f (ρ i₁) e₁ ]) ⊛ σ  ≡⟨ ⊛-cong (update-commutes-ext (≠-sym x)) refl ⟩
+                                ([ l₁ ~> f (ρ i₁) e₁ ] ⊛ [ l₂ ~> f (ρ i₂) e₂ ]) ⊛ σ  ≡⟨ sym (⊛-assoc ([ l₁ ~> f (ρ i₁) e₁ ]) _ _) ⟩
+                                 [ l₁ ~> f (ρ i₁) e₁ ] ⊛ ([ l₂ ~> f (ρ i₂) e₂ ] ⊛ σ) ∎))
+eval-t-commute f (i₁ , _) (i₂ , _) tr rec (#-neq-tr _ _ neq (#ₐ-WR l₁ l₂ e x)) =
                         funExt (λ ρ →
                           funExt λ σ →
                             cong₂ rec (funExt λ v →
                               cong₂ (set-reg ρ i₂)
                                     ((get-default-≠ {σ = σ} x)) refl)
-                                    (cong (λ x → [ l₁ ~> evalE x e ] ⊛ σ) (sym (set-reg-irrel {ρ = ρ} (≠-sym neq)))))
-eval-t-commute (i₁ , _) (i₂ , _) tr rec (#-neq-tr _ _ neq (#ₐ-RW l₁ l₂ e x)) =
+                                    (cong (λ x → [ l₁ ~> f x e ] ⊛ σ) (sym (set-reg-irrel {ρ = ρ} (≠-sym neq)))))
+eval-t-commute f (i₁ , _) (i₂ , _) tr rec (#-neq-tr _ _ neq (#ₐ-RW l₁ l₂ e x)) =
                         funExt (λ ρ →
                           funExt λ σ →
                             cong₂ rec (cong (set-reg ρ i₁) (sym (get-default-≠ {σ = σ} (≠-sym x))) )
-                                      (⊛-cong (cong (λ x → [ l₂ ~> evalE x e ]) (set-reg-irrel {ρ = ρ} neq)) refl ))
+                                      (⊛-cong (cong (λ x → [ l₂ ~> f x e ]) (set-reg-irrel {ρ = ρ} neq)) refl ))
 
 -- We define new sematics by evaluating a trace directly.
 -- We use the recursion principle for the trace monoid, which forces us to prove that
 -- the permutation of independent actions does not change the store
-eval-t : Trace → Registers → Store → Store
-eval-t tr =
-  Rec.f is-set-eval-t (λ _ σ → σ)  eval-t-rec (λ x y rec → eval-t-commute x y tr rec ) tr --
+eval-t : (RegisterVal → Exp → ℕ) → Trace → Registers → Store → Store
+eval-t evalExp tr =
+  Rec.f is-set-eval-t (λ _ σ → σ)  (eval-t-rec evalExp) (λ x y rec → eval-t-commute  evalExp x y tr rec ) tr --
 
 -- The store semantics on lists of commands gives the same result as the semantics on traces
-eval-eval-t : ∀ (s : Schedule) (ρ : Registers) (σ : Store) (l : Location) → eval s ρ σ l ≡ eval-t ⟦ s ⟧ ρ σ l
-eval-eval-t [] ρ σ l = refl
-eval-eval-t ((i , Ṙ l1) ∷ xs) ρ σ  l = eval-eval-t xs _ _ _
-eval-eval-t ((i , Ẇ l1 e) ∷ xs) ρ σ l =  eval-eval-t xs _ _ _
+eval-eval-t : ∀ (evalExp  : RegisterVal → Exp → ℕ) (s : Schedule) (ρ : Registers) (σ : Store) (l : Location) →
+              eval evalExp s ρ σ l ≡ eval-t evalExp ⟦ s ⟧ ρ σ l
+eval-eval-t _ [] ρ σ l = refl
+eval-eval-t f ((i , Ṙ l1) ∷ xs) ρ σ  l = eval-eval-t _ xs _ _ _
+eval-eval-t f ((i , Ẇ l1 e) ∷ xs) ρ σ l = eval-eval-t _ xs _ _ _
 
-eval-eval-t-ext : ∀ (s : Schedule) → eval s ≡ eval-t ⟦ s ⟧
-eval-eval-t-ext s = funExt (λ σ → funExt (λ ρ → funExt (λ l → eval-eval-t s σ ρ l)))
+eval-eval-t-ext : ∀ (evalExp  : RegisterVal → Exp → ℕ) (s : Schedule) → eval evalExp s ≡ eval-t evalExp ⟦ s ⟧
+eval-eval-t-ext _ s = funExt (λ σ → funExt (λ ρ → funExt (λ l → eval-eval-t _ s σ ρ l)))
 
 -- Soundness: equal traces give semantically equivalent schedules
-trace-sem-sound : {p₁ p₂ : Schedule} → ⟦ p₁ ⟧ ≡ ⟦ p₂ ⟧ → p₁ ≈ p₂
-trace-sem-sound {p₁} {p₂} tr≡ =
-  eval p₁      ≡⟨ eval-eval-t-ext p₁ ⟩
-  eval-t ⟦ p₁ ⟧ ≡⟨ cong eval-t tr≡ ⟩
-  eval-t ⟦ p₂ ⟧ ≡⟨ sym (eval-eval-t-ext p₂) ⟩
-  eval p₂ ∎
+trace-sem-sound : {p₁ p₂ : Schedule} → (RegisterVal → Exp → ℕ) → ⟦ p₁ ⟧ ≡ ⟦ p₂ ⟧ → p₁ ≈ p₂
+trace-sem-sound {p₁} {p₂} f tr≡ =
+  funExt (λ f →
+  eval f p₁       ≡⟨ eval-eval-t-ext f p₁ ⟩
+  eval-t f ⟦ p₁ ⟧ ≡⟨ cong (eval-t f) tr≡ ⟩
+  eval-t f ⟦ p₂ ⟧ ≡⟨ sym (eval-eval-t-ext f p₂) ⟩
+  eval f p₂ ∎)
 
 -- The semantic counterpart of serializability (the one that we don't want to use directly)
 serializable-eval : Schedule → Set
 serializable-eval p = Σ[ (p₁ , p₂) ∈ Transaction × Transaction ] (p ≈ seq-scheduler p₁ p₂)
 
 -- The example schedule is serialisable wrt. store semantics as a consequence of the soundness theorem
-ex-serializable-eval : ∀ {a : ℕ} → serializable-eval (ex-interleaving a)
-ex-serializable-eval {a = a} =  ( (rw-prog₁ a , rw-prog₁ a) , trace-sem-sound (ex-trace-equiv {a = a}))
+ex-serializable-eval : ∀ {evalExp : RegisterVal → Exp → ℕ} {a : ℕ} → serializable-eval (ex-interleaving a)
+ex-serializable-eval {evalExp = evalExp} {a = a} =  ( (rw-prog₁ a , rw-prog₁ a) , trace-sem-sound evalExp (ex-trace-equiv {a = a}))
