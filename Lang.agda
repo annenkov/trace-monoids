@@ -150,18 +150,28 @@ get-default σ l with σ l
 ... | just v = v
 ... | nothing = 0
 
-evalE : RegisterVal → Exp → ℕ
-evalE v (e₁ ∔ e₂) = evalE v e₁ + evalE v e₂
-evalE v (e₁ ∸ e₂) = evalE v e₁ - evalE v e₂
-evalE v Load = v
-evalE v (` i) = i
+evalE : RegisterVal → Exp → Maybe ℕ
+evalE v (e₁ ∔ e₂) with evalE v e₁ | evalE v e₂
+...                  | just v₁    | just v₂ = just (v₁ + v₂)
+...                  | _          | _       = nothing
+evalE v (e₁ ∸ e₂) with evalE v e₁ | evalE v e₂
+...                  | just v₁    | just v₂ = if v₁ < v₂ then nothing else just (v₁ - v₂)
+...                  | _          | _       = nothing
+evalE v Load = just v
+evalE v (` i) = just i
+
+bind-Maybe : ∀ {A B : Set} → Maybe A → (A → Maybe B) → Maybe B
+bind-Maybe (just v) f = f v
+bind-Maybe nothing _ = nothing
 
 -- Take an expresison eval function, global store, registers and return a potentially updated global state
-eval : (RegisterVal → Exp → ℕ) → Schedule → Registers → Store  → Store
-eval evalExp [] ρ σ   = σ
-eval evalExp ((i , Ṙ l) ∷ xs) ρ σ  = eval evalExp xs (set-reg ρ i (get-default σ l)) σ
-eval evalExp ((i , Ẇ l e) ∷ xs) ρ σ  = eval evalExp xs ρ ([ l ~> evalExp (ρ i) e ] ⊛ σ)
-
+eval : (RegisterVal → Exp → Maybe ℕ) → Schedule → Registers → Store  → Maybe Store
+eval evalExp []   = λ ρ σ → just σ
+eval evalExp ((i , Ṙ l) ∷ xs)  = λ ρ σ → eval evalExp xs (set-reg ρ i (get-default σ l)) σ
+eval evalExp ((i , Ẇ l e) ∷ xs) = λ ρ σ → bind-Maybe ( map-Maybe (λ v →([ l ~> v ])) (evalExp (ρ i) e)) (λ v → eval evalExp xs ρ (v ⊛ σ))
+-- with evalExp (ρ i) e
+-- ...                                    | just v = eval evalExp xs ρ ([ l ~> v ] ⊛ σ)
+-- ...                                    | nothing = nothing
 mk-sch : ℕ → Transaction → Schedule
 mk-sch i xs = map (λ c → (i , c)) xs
 
@@ -171,7 +181,7 @@ mk-sch i xs = map (λ c → (i , c)) xs
 seq-scheduler : Transaction → Transaction → Schedule
 seq-scheduler xs ys = mk-sch 0 xs ++ mk-sch 1 ys
 
-eval-seq : (RegisterVal → Exp → ℕ) → Store → Registers → Transaction × Transaction → Store
+eval-seq : (RegisterVal → Exp → Maybe ℕ) → Store → Registers → Transaction × Transaction → Maybe Store
 eval-seq evalExp σ ρ (t₁ , t₂) = eval evalExp (seq-scheduler t₁ t₂) ρ σ
 
 infixr 5 _﹔_
@@ -191,8 +201,9 @@ rw-prog₁ a = Ṙ A ﹔ Ẇ A (Load ∔ ` a) ﹔(Ṙ  B) ﹔( Ẇ B (Load ∔ `
 ex1 : Schedule
 ex1 = mk-sch 0 (rw-prog₁ 1)
 
-xy-to-list : Store → List (ℕ × Maybe ℕ)
-xy-to-list σ = (0 , σ 0) ∷ (1 , σ 1) ∷ []
+xy-to-list : Maybe Store → List (ℕ × Maybe ℕ)
+xy-to-list (just σ) = (0 , σ 0) ∷ (1 , σ 1) ∷ []
+xy-to-list _ = []
 
 ex-eval : xy-to-list (eval evalE ex1 init-regs ∅) ≡ ((0 , just 1) ∷ (1 , just 10) ∷ [])
 ex-eval = refl
@@ -226,7 +237,7 @@ serializable p = Σ[(p₁ , p₂)∈ Transaction × Transaction ] (⟦ p ⟧ ≡
 
 -- Semantically equivalent programs result in the same store
 _≈_ : Schedule → Schedule → Set
-p₁ ≈ p₂ = (λ (f : RegisterVal → Exp → ℕ) → eval f p₁) ≡ (λ (f : RegisterVal → Exp → ℕ) → eval f p₂)
+p₁ ≈ p₂ = (λ (f : RegisterVal → Exp → Maybe ℕ) → eval f p₁) ≡ (λ (f : RegisterVal → Exp → Maybe ℕ) → eval f p₂)
 
 infix 40 T₀:_
 infix 40 T₁:_
@@ -366,55 +377,71 @@ update-commutes-ext neq = funExt (λ l → update-commutes l neq)
 ⊛-cong-assoc : ∀ {σ₁ σ₂ σ₃ σ₄ σ} → σ₁ ≡ σ₂ → σ₃ ≡ σ₄ → σ₁ ⊛ (σ₃ ⊛ σ) ≡ σ₂ ⊛ (σ₄ ⊛ σ)
 ⊛-cong-assoc p q = ⊛-cong p (⊛-cong q refl )
 
-is-set-eval-t : isSet (Registers → Store → Map)
-is-set-eval-t = isSetΠ2 (λ _ _ → isSetΠ (λ _ → isOfHLevelMaybe zero isSetℕ))
+is-set-eval-t : isSet (Registers → Store → Maybe Map)
+is-set-eval-t = isSetΠ2 (λ _ _ → isOfHLevelMaybe zero (isSetΠ ( λ _ → isOfHLevelMaybe zero isSetℕ)))
 
-eval-t-rec : (RegisterVal → Exp → ℕ) → Event → (Registers → Store → Map) → Registers → Store → Map
-eval-t-rec evalExp (i , Ṙ l) rec ρ σ = rec (set-reg ρ i (get-default σ l)) σ
-eval-t-rec evalExp (i , Ẇ l e) rec ρ σ = rec ρ ([ l ~> evalExp (ρ i) e ] ⊛ σ)
+eval-t-rec : (RegisterVal → Exp → Maybe ℕ) → Event → (Registers → Store → Maybe Map) → Registers → Store → Maybe Map
+eval-t-rec evalExp (i , Ṙ l) rec = λ ρ σ → rec (set-reg ρ i (get-default σ l)) σ
+eval-t-rec evalExp (i , Ẇ l e) rec = λ ρ σ → bind-Maybe ( map-Maybe (λ v →([ l ~> v ])) (evalExp (ρ i) e)) (λ v → rec ρ (v ⊛ σ))
 
-eval-t-commute : ∀ (evalExp : RegisterVal → Exp → ℕ) →
+-- eval-t-rec evalExp (i , Ẇ l e) rec ρ σ with evalExp (ρ i) e
+-- ...                                       | just v = rec ρ ([ l ~> v ] ⊛ σ)
+-- ...                                       | nothing = nothing
+
+
+-- et-comm : (Registers → Store  → Maybe Store) → (Registers → Store  → Maybe Store) → Registers → Store → Set
+-- et-comm f g ρ σ with f ρ σ | g ρ σ
+-- ... | just m₁ | just m₂ =
+
+
+eval-t-commute : ∀ (evalExp : RegisterVal → Exp → Maybe ℕ) →
                  (x y : Event) (tr : Trace) →
-                 (rec :  Registers → Store → Map) →
+                 (rec :  Registers → Store → Maybe Map) →
                  x # y →
                  eval-t-rec evalExp x (eval-t-rec evalExp y rec) ≡ eval-t-rec evalExp y (eval-t-rec evalExp x rec)
 eval-t-commute _ (i₁ , _) (i₂ , _) tr rec (#-neq-tr _ _ neq (#ₐ-RR l₁ l₂)) =
                         funExt (λ _ → funExt λ _ → cong₂ rec (set-reg-≠-regs-ext neq) refl)
 eval-t-commute f (i₁ , _) (i₂ , _) tr rec (#-neq-tr _ _ neq (#ₐ-WW l₁ l₂ e₁ e₂ x)) =
-                        funExt (λ ρ → funExt λ σ → cong (rec ρ)
-                               ( [ l₂ ~> f (ρ i₂) e₂ ] ⊛ ([ l₁ ~> f (ρ i₁) e₁ ] ⊛ σ) ≡⟨ ⊛-assoc [ l₂ ~> f (ρ i₂) e₂ ] _ _ ⟩
-                                ([ l₂ ~> f (ρ i₂) e₂ ] ⊛ [ l₁ ~> f (ρ i₁) e₁ ]) ⊛ σ  ≡⟨ ⊛-cong (update-commutes-ext (≠-sym x)) refl ⟩
-                                ([ l₁ ~> f (ρ i₁) e₁ ] ⊛ [ l₂ ~> f (ρ i₂) e₂ ]) ⊛ σ  ≡⟨ sym (⊛-assoc ([ l₁ ~> f (ρ i₁) e₁ ]) _ _) ⟩
-                                 [ l₁ ~> f (ρ i₁) e₁ ] ⊛ ([ l₂ ~> f (ρ i₂) e₂ ] ⊛ σ) ∎))
-eval-t-commute f (i₁ , _) (i₂ , _) tr rec (#-neq-tr _ _ neq (#ₐ-WR l₁ l₂ e x)) =
-                        funExt (λ ρ →
-                          funExt λ σ →
-                            cong₂ rec (funExt λ v →
-                              cong₂ (set-reg ρ i₂)
-                                    ((get-default-≠ {σ = σ} x)) refl)
-                                    (cong (λ x → [ l₁ ~> f x e ] ⊛ σ) (sym (set-reg-irrel {ρ = ρ} (≠-sym neq)))))
-eval-t-commute f (i₁ , _) (i₂ , _) tr rec (#-neq-tr _ _ neq (#ₐ-RW l₁ l₂ e x)) =
-                        funExt (λ ρ →
-                          funExt λ σ →
-                            cong₂ rec (cong (set-reg ρ i₁) (sym (get-default-≠ {σ = σ} (≠-sym x))) )
-                                      (⊛-cong (cong (λ x → [ l₂ ~> f x e ]) (set-reg-irrel {ρ = ρ} neq)) refl ))
+                        funExt (λ ρ → funExt λ σ → {!!}
+                        -- cong (rec ρ)
+                        --        (
+                               -- [ l₂ ~> f (ρ i₂) e₂ ] ⊛ ([ l₁ ~> f (ρ i₁) e₁ ] ⊛ σ) ≡⟨ ⊛-assoc [ l₂ ~> f (ρ i₂) e₂ ] _ _ ⟩
+                               --  ([ l₂ ~> f (ρ i₂) e₂ ] ⊛ [ l₁ ~> f (ρ i₁) e₁ ]) ⊛ σ  ≡⟨ ⊛-cong (update-commutes-ext (≠-sym x)) refl ⟩
+                               --  ([ l₁ ~> f (ρ i₁) e₁ ] ⊛ [ l₂ ~> f (ρ i₂) e₂ ]) ⊛ σ  ≡⟨ sym (⊛-assoc ([ l₁ ~> f (ρ i₁) e₁ ]) _ _) ⟩
+                               --   [ l₁ ~> f (ρ i₁) e₁ ] ⊛ ([ l₂ ~> f (ρ i₂) e₂ ] ⊛ σ) ∎
+                                 -- )
+                                 )
+eval-t-commute f (i₁ , _) (i₂ , _) tr rec (#-neq-tr _ _ neq (#ₐ-WR l₁ l₂ e x)) = {!!}
+                        -- funExt (λ ρ →
+                        --   funExt λ σ →
+                        --     cong₂ rec (funExt λ v →
+                        --       cong₂ (set-reg ρ i₂)
+                        --             ((get-default-≠ {σ = σ} x)) refl)
+                        --             (cong (λ x → [ l₁ ~> f x e ] ⊛ σ) (sym (set-reg-irrel {ρ = ρ} (≠-sym neq)))))
+eval-t-commute f (i₁ , _) (i₂ , _) tr rec (#-neq-tr _ _ neq (#ₐ-RW l₁ l₂ e x)) = {!!}
+                        -- funExt (λ ρ →
+                        --   funExt λ σ →
+                        --     cong₂ rec (cong (set-reg ρ i₁) (sym (get-default-≠ {σ = σ} (≠-sym x))) )
+                        --               (⊛-cong (cong (λ x → [ l₂ ~> f x e ]) (set-reg-irrel {ρ = ρ} neq)) refl ))
 
 -- We define new sematics by evaluating a trace directly.
 -- We use the recursion principle for the trace monoid, which forces us to prove that
 -- the permutation of independent actions does not change the store
-eval-t : (RegisterVal → Exp → ℕ) → Trace → Registers → Store → Store
+eval-t : (RegisterVal → Exp → Maybe ℕ) → Trace → Registers → Store → Maybe Store
 eval-t evalExp tr =
-  Rec.f is-set-eval-t (λ _ σ → σ)  (eval-t-rec evalExp) (λ x y rec → eval-t-commute  evalExp x y tr rec ) tr --
+  Rec.f is-set-eval-t (λ _ σ → just σ) (eval-t-rec evalExp) (λ x y rec → eval-t-commute evalExp x y tr rec ) tr
 
 -- The store semantics on lists of commands gives the same result as the semantics on traces
-eval-eval-t : ∀ (evalExp  : RegisterVal → Exp → ℕ) (s : Schedule) (ρ : Registers) (σ : Store) (l : Location) →
-              eval evalExp s ρ σ l ≡ eval-t evalExp ⟦ s ⟧ ρ σ l
-eval-eval-t _ [] ρ σ l = refl
-eval-eval-t f ((i , Ṙ l1) ∷ xs) ρ σ  l = eval-eval-t _ xs _ _ _
-eval-eval-t f ((i , Ẇ l1 e) ∷ xs) ρ σ l = eval-eval-t _ xs _ _ _
+eval-eval-t : ∀ (evalExp  : RegisterVal → Exp → Maybe ℕ) (s : Schedule) →
+              eval evalExp s ≡ eval-t evalExp ⟦ s ⟧
+eval-eval-t _ [] = refl
+eval-eval-t f ((i , Ṙ l1) ∷ xs)  = eval-eval-t f {!!}  --eval-eval-t _ xs _ _
+eval-eval-t f ((i , Ẇ l1 e) ∷ xs) = eval-eval-t f {!!} -- eval-eval-t _ xs _ _
 
-eval-eval-t-ext : ∀ (evalExp  : RegisterVal → Exp → ℕ) (s : Schedule) → eval evalExp s ≡ eval-t evalExp ⟦ s ⟧
-eval-eval-t-ext _ s = funExt (λ σ → funExt (λ ρ → funExt (λ l → eval-eval-t _ s σ ρ l)))
+eval-eval-t-ext : ∀ (evalExp  : RegisterVal → Exp → Maybe ℕ) (s : Schedule) → eval evalExp s ≡ eval-t evalExp ⟦ s ⟧
+eval-eval-t-ext _ s =  {!!} --funExt (λ σ → funExt (λ ρ → eval-eval-t _ s σ ρ))
+
+  -- funExt (λ σ → funExt (λ ρ → funExt (λ l → eval-eval-t _ s σ ρ l)))
 
 -- Soundness: equal traces give semantically equivalent schedules
 trace-sem-sound : {p₁ p₂ : Schedule} → (RegisterVal → Exp → ℕ) → ⟦ p₁ ⟧ ≡ ⟦ p₂ ⟧ → p₁ ≈ p₂
@@ -432,3 +459,8 @@ serializable-eval p = Σ[ (p₁ , p₂) ∈ Transaction × Transaction ] (p ≈ 
 -- The example schedule is serialisable wrt. store semantics as a consequence of the soundness theorem
 ex-serializable-eval : ∀ {evalExp : RegisterVal → Exp → ℕ} {a : ℕ} → serializable-eval (ex-interleaving a)
 ex-serializable-eval {evalExp = evalExp} {a = a} =  ( (rw-prog₁ a , rw-prog₁ a) , trace-sem-sound evalExp (ex-trace-equiv {a = a}))
+
+postulate
+  ii : ℕ
+  ll : ℕ
+  xs : Schedule
