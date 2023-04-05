@@ -1,4 +1,4 @@
-{-# OPTIONS --cubical -W noNoEquivWhenSplitting #-}
+{-# OPTIONS --cubical -W noUnsupportedIndexedMatch #-}
 
 module Lang  where
 
@@ -14,7 +14,7 @@ open import Cubical.Data.Bool hiding (_≟_)
 open import Cubical.Foundations.Prelude renaming (_∙_ to compPath)
 open import Cubical.Algebra.Monoid
 open import Cubical.Relation.Nullary
-open import Cubical.Relation.Nullary.DecidableEq
+open import Cubical.Relation.Nullary.DecidablePropositions
 
 open import Agda.Primitive
 open import Agda.Builtin.List
@@ -303,18 +303,6 @@ ex-trace-equiv = pcm-cong-head {s₁ = T₀: Ṙ A  ∙ T₀: Ẇ A _ ∙ T₀: 
 ex-serializable : ∀ {a : ℕ} → serializable (ex-interleaving a)
 ex-serializable {a = a} =  ( (rw-prog₁ a , rw-prog₁ a) , ex-trace-equiv {a = a})
 
-
--- Some machinery for maintaning information during pattern-matching, it's standard, but yet missing in the distribution of Cubical Agda (maybe it's updated now?)
-record Reveal_·_is_ {a b} {A : Set a} {B : A → Set b}
-                    (f : (x : A) → B x) (x : A) (y : B x) :
-                    Set (a ⊔ b) where
-  constructor [_]
-  field eq : f x ≡ y
-
-inspect : ∀ {a b} {A : Set a} {B : A → Set b}
-          (f : (x : A) → B x) (x : A) → Reveal f · x is f x
-inspect f x = [ refl ]
-
 ℕ==→≡ : ∀ {n m : ℕ} → (n == m) ≡ true → n ≡ m
 ℕ==→≡ {zero} {zero} p = refl
 ℕ==→≡ {zero} {suc m} p = ⊥.elim {A = λ _ → zero ≡ (suc m)} (true≢false (sym p))
@@ -329,30 +317,30 @@ inspect f x = [ refl ]
 
 set-reg-≠-regs : ∀ {j i₁ i₂ v₁ v₂ ρ} → i₁ ≠ i₂ → set-reg (set-reg ρ i₁ v₁) i₂ v₂ j ≡ set-reg (set-reg ρ i₂ v₂) i₁ v₁ j
 set-reg-≠-regs {j} {i₁} {i₂} {v₁} {v₂} {ρ} neq with (i₁ == j) | inspect (λ x → i₁ == x) j  | i₂ == j | inspect (λ x → i₂ == x) j
-... | true  | [ eq1 ] | true  | [ eq2 ] = ⊥.elim (neq (compPath (ℕ==→≡ eq1) (sym (ℕ==→≡ eq2))))
-... | true  | [ eq1 ] | false | [ eq2 ] = refl
+... | true  | [ eq1 ]ᵢ  | true  | [ eq2 ]ᵢ = ⊥.elim (neq (compPath (ℕ==→≡ eq1) (sym (ℕ==→≡ eq2))))
+... | true  | [ eq1 ]ᵢ  | false | [ eq2 ]ᵢ  = refl
 ... | false | _ | true  | _ = refl
 ... | false | _ | false | _ = refl
 
 get-default-≠ : ∀ {l₁ l₂ v σ } → l₁ ≠ l₂ → get-default ([ l₁ ~> v ] ⊛ σ) l₂ ≡ get-default σ l₂
 get-default-≠ {l₁} {l₂} {v} {σ} p with (l₁ == l₂) | inspect (l₁ ==_) l₂
-... | true  | [ eq ] = ⊥.elim (p (ℕ==→≡ eq))
-... | false | [ eq ] = refl
+... | true  | [ eq ]ᵢ = ⊥.elim (p (ℕ==→≡ eq))
+... | false | [ eq ]ᵢ = refl
 
 set-reg-≠-regs-ext : ∀ {i₁ i₂ v₁ v₂ ρ} → i₁ ≠ i₂  → set-reg (set-reg ρ i₁ v₁) i₂ v₂ ≡ set-reg (set-reg ρ i₂ v₂) i₁ v₁
 set-reg-≠-regs-ext {i₁} {i₂} {v₁} {v₂} {ρ} neq = funExt (λ x → set-reg-≠-regs {x} {i₁} {i₂} {v₁} {v₂} {ρ} neq)
 
 set-reg-irrel : ∀ {ρ i₁ i₂ v} → i₁ ≠ i₂ → set-reg ρ i₁ v i₂ ≡ ρ i₂
 set-reg-irrel {ρ} {i₁} {i₂} {v} neq with (i₁ == i₂)| inspect (λ x → i₁ == x) i₂
-... | true  | [ eq ] = ⊥.elim (neq (ℕ==→≡ eq))
-... | false  | [ eq ] = refl
+... | true  | [ eq ]ᵢ = ⊥.elim (neq (ℕ==→≡ eq))
+... | false  | [ eq ]ᵢ = refl
 
 update-commutes : ∀ {l₁ v₁ l₂ v₂} l → l₁ ≠ l₂ → ([ l₁ ~> v₁ ] ⊛ ([ l₂ ~> v₂ ])) l ≡ ([ l₂ ~> v₂ ] ⊛ ([ l₁ ~> v₁ ])) l
 update-commutes {l₁} {v₁} {l₂} {v₂} l neq with (l₁ == l) | inspect (λ x → l₁ == x) l | (l₂ == l) | inspect (l₂ ==_) l
-... | true  | [ eq1 ] | true  | [ eq2 ] = ⊥.elim (neq (compPath (ℕ==→≡ eq1) (sym (ℕ==→≡ eq2))))
-... | true  | [ eq1 ] | false | [ eq2 ]  = refl
-... | false  | [ eq1 ] | true | [ eq2 ]  = refl
-... | false  | [ eq1 ] | false | [ eq2 ]  = refl
+... | true  | [ eq1 ]ᵢ  | true  | [ eq2 ]ᵢ = ⊥.elim (neq (compPath (ℕ==→≡ eq1) (sym (ℕ==→≡ eq2))))
+... | true  | [ eq1 ]ᵢ  | false | [ eq2 ]ᵢ  = refl
+... | false | [ eq1 ]ᵢ  | true  | [ eq2 ]ᵢ  = refl
+... | false | [ eq1 ]ᵢ  | false | [ eq2 ]ᵢ  = refl
 
 update-commutes-ext : ∀ {l₁ v₁ l₂ v₂} → l₁ ≠ l₂ → ([ l₁ ~> v₁ ] ⊛ ([ l₂ ~> v₂ ])) ≡ ([ l₂ ~> v₂ ] ⊛ ([ l₁ ~> v₁ ]))
 update-commutes-ext neq = funExt (λ l → update-commutes l neq)

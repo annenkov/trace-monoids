@@ -1,11 +1,11 @@
-{-# OPTIONS --cubical -W noNoEquivWhenSplitting #-}
+{-# OPTIONS --cubical  #-}
 
 module TraceMonoid where
 
 open import Agda.Primitive
 open import Cubical.Relation.Nullary
 open import Cubical.Data.Empty as ⊥
-open import Cubical.Data.Nat
+open import Cubical.Data.Nat hiding (_^_)
 open import Cubical.Core.Everything
 open import Cubical.Foundations.Prelude hiding (_∙_)
 open import Cubical.Foundations.HLevels
